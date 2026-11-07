@@ -1,0 +1,57 @@
+# A lean Isaac Sim app with the RTX renderer: the physics app
+# (openbeam.isaacsim.physics.kit) plus the RTX Hydra delegate, a viewport,
+# viewport capture and a main window with menus. It renders the OpenBeam
+# extension's beams without the stock app's sensor, replicator, robotics and
+# editor extensions, so it fits beside other work on a 16 GB machine.
+#
+#   python.bat isaacsim/demo_isaacsim.py --app viewer --capture crate.png
+#   python.bat isaacsim/demo_isaacsim.py --app viewer --gui
+
+[package]
+title = "OpenBeam Isaac Sim viewer"
+description = "PhysX, the RTX renderer and a viewport for the OpenBeam soft-body extension"
+version = "0.1.0"
+keywords = ["experience", "app", "openbeam", "physics", "rtx"]
+
+[dependencies]
+"omni.kit.loop-isaac" = {}       # the run loop SimulationApp drives
+"omni.client" = {}
+"omni.usd" = {}
+"omni.timeline" = {}
+"omni.physx" = {}
+"omni.physics.tensors" = {}
+"omni.physx.tensors" = {}
+"isaacsim.core.simulation_manager" = {}
+"omni.hydra.rtx" = {}
+"omni.kit.mainwindow" = {}
+"omni.kit.menu.utils" = {}
+"omni.kit.viewport.window" = {}
+"omni.kit.viewport.utility" = {}
+"omni.kit.renderer.capture" = {}
+
+[settings]
+renderer.asyncInit = true
+renderer.gpuEnumeration.glInterop.enabled = false
+renderer.startupMessageDisplayed = true
+
+[settings.app]
+name = "OpenBeam-Isaac-Viewer"
+version = "6.2.0"
+settings.persistent = false
+vulkan = true
+enableDeveloperWarnings = false
+
+[settings.app.renderer]
+resolution.width = 1280
+resolution.height = 720
+skipWhileMinimized = false
+sleepMsOnFocus = 0
+sleepMsOutOfFocus = 0
+
+[settings.app.exts.folders]
+'++' = [
+    "${app}/../exts",
+    "${kit}/../exts",
+    "${kit}/../extscache",
+    "${kit}/../extsDeprecated",
+]

@@ -1,0 +1,63 @@
+# Builds the core and the MuJoCo plugin and runs every test that needs no GPU:
+# the core's contract tests, the MuJoCo plugin tests, the Isaac Sim extension's
+# ctypes-binding tests and the LeRobot environment tests. The in-Isaac checks
+# (isaacsim/tests/isaac_coupling_check.py, isaac_gui_smoke.py) need Isaac Sim
+# and an RTX GPU, so they run by hand (README.md).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    env:
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Vendored OpenBeam sources match SOURCES.json
+        run: python tools/vendor_openbeam.py --check
+      - name: Fetch MuJoCo 4.0.0
+        run: python tools/fetch_mujoco.py
+
+      - name: Build and test the core and MuJoCo plugin (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./build_windows.ps1
+      - name: Install Ninja and headless OpenGL (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libosmesa6 libgl1
+      - name: Build and test the core and MuJoCo plugin (Linux)
+        if: runner.os == 'Linux'
+        run: ./build_linux.sh
+
+      - name: Install the Python test dependencies (CPU torch)
+        run: >-
+          python -m pip install mujoco==4.0.0 lerobot==0.7.0 pytest pillow
+          --extra-index-url https://download.pytorch.org/whl/cpu
+      - name: MuJoCo plugin and Isaac binding tests
+        run: python -m pytest mujoco/tests isaacsim/tests -q
+      - name: LeRobot environment tests
+        env:
+          MUJOCO_GL: ${{ runner.os == 'Linux' && 'osmesa' || '' }}
+          PYOPENGL_PLATFORM: ${{ runner.os == 'Linux' && 'osmesa' || '' }}
+        run: python -m pytest lerobot/tests -q -rs
+      - name: MuJoCo wrecking-ball demo
+        run: python mujoco/demo.py --seconds 3
+      - name: The Isaac Sim scripts compile
+        run: python -m compileall -q isaacsim

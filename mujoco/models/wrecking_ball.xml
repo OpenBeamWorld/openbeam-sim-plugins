@@ -1,0 +1,57 @@
+<!--
+  OpenBeam in MuJoCo: a 300 kg wrecking ball (MuJoCo rigid body on a hinge)
+  swings into a JBeam truss crate (OpenBeam soft body, plugin "openbeam.softbody").
+
+  The jbeam path is relative: run from assets/, or set
+  OPENBEAM_ASSET_DIR to that directory. demo.py does the latter.
+-->
+<mujoco model="openbeam_wrecking_ball">
+  <option timestep="0.002" integrator="implicitfast"/>
+
+  <extension>
+    <plugin plugin="openbeam.softbody">
+      <instance name="crate">
+        <config key="jbeam" value="truss_crate.jbeam"/>
+        <config key="pos" value="0.45 -0.6 0.02"/>
+        <config key="colliders" value="ball"/>
+        <config key="stress_scale" value="2000"/>
+      </instance>
+    </plugin>
+  </extension>
+
+  <visual>
+    <global offwidth="1280" offheight="720"/>
+    <quality shadowsize="4096"/>
+    <scale framelength="0.2"/>
+  </visual>
+
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" rgb1=".55 .55 .58" rgb2=".45 .45 .48" width="512" height="512"/>
+    <material name="grid" texture="grid" texrepeat="8 8" reflectance=".1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="1 -3 6" dir="-0.1 0.4 -1" directional="true" castshadow="true"/>
+    <geom name="floor" type="plane" size="10 10 0.1" material="grid"/>
+    <body name="frame" pos="0 0 3.6">
+      <geom type="box" size="0.08 1.2 0.06" rgba=".3 .3 .35 1" contype="0" conaffinity="0"/>
+      <body name="pendulum">
+        <joint name="swing" type="hinge" axis="0 1 0"/>
+        <geom name="rod" type="capsule" fromto="0 0 0 0 0 -2.6" size="0.03" mass="5"
+              rgba=".25 .25 .25 1" contype="0" conaffinity="0"/>
+        <geom name="ball" type="sphere" pos="0 0 -3" size="0.4" mass="300"
+              rgba=".15 .15 .18 1" contype="0" conaffinity="0"/>
+      </body>
+    </body>
+    <camera name="side" pos="0.9 -5.2 1.9" xyaxes="1 0 0 0 0.25 1"/>
+  </worldbody>
+
+  <sensor>
+    <plugin name="crate_state" instance="crate"/>
+    <framelinvel name="ball_velocity" objtype="geom" objname="ball"/>
+  </sensor>
+
+  <keyframe>
+    <key name="release" qpos="1.0472"/>
+  </keyframe>
+</mujoco>

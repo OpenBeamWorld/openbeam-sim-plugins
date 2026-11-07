@@ -1,0 +1,37 @@
+# A physics-only Isaac Sim app for headless OpenBeam runs: PhysX, the physics
+# tensor API and Isaac's simulation manager, without the RTX renderer, viewport
+# or UI. It needs a few GB less memory than the stock Python app, which is what
+# lets the demo run on a 16 GB machine beside other work.
+#
+#   python.bat isaacsim/demo_isaacsim.py --physics-only
+
+[package]
+title = "OpenBeam Isaac Sim physics"
+description = "Headless PhysX plus the OpenBeam soft-body extension, no renderer"
+version = "0.1.0"
+keywords = ["experience", "app", "openbeam", "physics"]
+
+[dependencies]
+"omni.kit.loop-isaac" = {}       # the run loop SimulationApp drives
+"omni.client" = {}
+"omni.usd" = {}
+"omni.timeline" = {}
+"omni.physx" = {}
+"omni.physics.tensors" = {}
+"omni.physx.tensors" = {}
+"isaacsim.core.simulation_manager" = {}
+
+[settings.app]
+name = "OpenBeam-Isaac-Physics"
+version = "6.2.0"
+settings.persistent = false
+window.enabled = false
+enableDeveloperWarnings = false
+
+[settings.app.exts.folders]
+'++' = [
+    "${app}/../exts",
+    "${kit}/../exts",
+    "${kit}/../extscache",
+    "${kit}/../extsDeprecated",
+]

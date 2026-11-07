@@ -1,0 +1,115 @@
+{
+ "licence": "GPL-3.0 (see each file's header and COPYING)",
+ "files": {
+  "engine/source/main/physics/BeamAxialKinematics.cpp": {
+   "sha256": "881409063c8b49dd28e64d3d8ad4d25ee9102608c15664d605d2b30b7e621853",
+   "repository": "OpenBeamWorld/boars",
+   "last_changed_in": "64b608d773d69a5e476faa0cfb3d63bf7e64fc82"
+  },
+  "engine/source/main/physics/BeamAxialKinematics.h": {
+   "sha256": "8c57ac413414e53de75c8a9d535d13a1b5bdd97fb6b9c03de6f3779568312994",
+   "repository": "OpenBeamWorld/boars",
+   "last_changed_in": "64b608d773d69a5e476faa0cfb3d63bf7e64fc82"
+  },
+  "engine/source/main/physics/BeamAxialResponse.h": {
+   "sha256": "d0f2993285874202e02356fec519c3df4607fc56f61567b3ccf2d7494b6dee00",
+   "repository": "OpenBeamWorld/boars",
+   "last_changed_in": "34e5b0f2c9759acf9233964e5b48b946a95ded5c"
+  },
+  "engine/source/main/physics/CalibratedBeamJBeamDerivation.h": {
+   "sha256": "ec50cc95e07e98e602842ac3ec418dbdfce8568ddf83fc712cee6748604234fd",
+   "repository": "OpenBeamWorld/boars",
+   "last_changed_in": "72fc8d0688fffe75d883e256eaaf9448d3bcdb2b"
+  },
+  "engine/source/main/physics/CalibratedBeamMaterial.h": {
+   "sha256": "73d2261ba9153d0dd369af29f58f07bbdecec44b65e16dfcb22cdd6a142027e6",
+   "repository": "OpenBeamWorld/boars",
+   "last_changed_in": "b3088590781db11c73d050b7f0076b83ff9aec92"
+  },
+  "engine/source/main/physics/CalibratedBeamMaterialAdapter.h": {
+   "sha256": "957688257dc17a8f7d5f06570e9df40083ce4b0b316c48be56b11bf37bbe89fc",
+   "repository": "OpenBeamWorld/boars",
+   "last_changed_in": "864766f867dad4ab11c8072457ea812f4739430f"
+  },
+  "engine/source/main/physics/CalibratedBeamProductionStep.cpp": {
+   "sha256": "56513a57879fb033d17b41f9348338dcd15b585c8da2865ada2152eb5acd0d5c",
+   "repository": "OpenBeamWorld/boars",
+   "last_changed_in": "53da041cf41ee91ab1b5b40c0ca321569cf7c2df"
+  },
+  "engine/source/main/physics/CalibratedBeamProductionStep.h": {
+   "sha256": "f7644c2dc35ff827ec776169875bb92c6699130d78bbd6b5236b6670788b76cd",
+   "repository": "OpenBeamWorld/boars",
+   "last_changed_in": "53da041cf41ee91ab1b5b40c0ca321569cf7c2df"
+  },
+  "engine/source/main/physics/FixedPhysicsStep.h": {
+   "sha256": "fadb782a0a960a0e0ff4bbf29380cb3826b3a42a5ac3e4b3a9c74a3f34d41fac",
+   "repository": "OpenBeamWorld/boars",
+   "last_changed_in": "5e94f55a819fae486300a954eaaafea479075ef5"
+  },
+  "engine/source/main/physics/ProgressiveBeamDamping.h": {
+   "sha256": "cb7650bf176b911dbba47edf5b72cd5aab5d545b458288da0717f74840aa6406",
+   "repository": "OpenBeamWorld/boars",
+   "last_changed_in": "8b251927033a47bd9a1e04f69217a5d1bfa46098"
+  },
+  "engine/source/main/physics/SimConstants.h": {
+   "sha256": "73e585ddf69734bad935925e16df5ae51f2c6089033b28ea81e5142f1dc7e8d7",
+   "repository": "OpenBeamWorld/boars",
+   "last_changed_in": "703063d8804886c292fe6275e34b1a5b5bd7302e"
+  },
+  "engine/source/main/resources/beamng/JBeamCoordinateTransform.h": {
+   "sha256": "752ad108c3be20f410918a089f2d1c6cff167cdc28473d322da2a4b287a8a5c3",
+   "repository": "OpenBeamWorld/boars",
+   "last_changed_in": "412e0231ac1433f01ad90e04b6054b8ba97596dd"
+  },
+  "engine/source/main/resources/beamng/JBeamExpressionEvaluator.cpp": {
+   "sha256": "c3343b27f4276e437591ccb4040d95d498220072a8b57bafc132f8dbd6b2b9c5",
+   "repository": "OpenBeamWorld/boars",
+   "last_changed_in": "fab05361d56d322a628457b63feee0e2c7141ecb"
+  },
+  "engine/source/main/resources/beamng/JBeamExpressionEvaluator.h": {
+   "sha256": "8f7242198b6179858d4e879380aa8ce873dd093faaae0449a41bbc8e8d252d3f",
+   "repository": "OpenBeamWorld/boars",
+   "last_changed_in": "7223223e0a943e57b86d5483a3ab2f4656404c58"
+  },
+  "engine/source/main/resources/beamng/JBeamPartResolver.cpp": {
+   "sha256": "04e0d04f8f011e35f73649407edd131407e1af1851c0d65c13a918c232a0e2ad",
+   "repository": "OpenBeamWorld/boars",
+   "last_changed_in": "fb7dcb06b87ed8d35b66f950bcefda048e6f9e6c"
+  },
+  "engine/source/main/resources/beamng/JBeamPartResolver.h": {
+   "sha256": "d70918babee6fc240b2cfeac9ce85ded610a59c5ae3bcd7d3596469db5448cca",
+   "repository": "OpenBeamWorld/boars",
+   "last_changed_in": "fb7dcb06b87ed8d35b66f950bcefda048e6f9e6c"
+  },
+  "engine/source/main/resources/beamng/JBeamStructuralIR.cpp": {
+   "sha256": "4b25756d1829d61a50224a7b9b21d01922b1a146457be51715137b76209caa35",
+   "repository": "OpenBeamWorld/boars",
+   "last_changed_in": "3540057ec2c5b7b8e314d76c49bd31ac691b3c0d"
+  },
+  "engine/source/main/resources/beamng/JBeamStructuralIR.h": {
+   "sha256": "ec74ac9c0f41b3dd2e115b55ed4aa9a810dbf1c65975af106ff24765decd1b4b",
+   "repository": "OpenBeamWorld/boars",
+   "last_changed_in": "6afff70c512a42f5f58fd1e1ed16dfabc1e055bb"
+  },
+  "engine/source/main/resources/beamng/JBeamSyntax.cpp": {
+   "sha256": "87cbdaaf201919e8910c1daee9cba11e64fcad9661820fa5f849260bee46f2e2",
+   "repository": "OpenBeamWorld/boars",
+   "last_changed_in": "e862dfa296d07fa81eee7cc6fe85b0335c2952e2"
+  },
+  "engine/source/main/resources/beamng/JBeamSyntax.h": {
+   "sha256": "be3ebc4a454e4f104763d019e2aff7936330e129ea15ecf54e03e56b47b6e933",
+   "repository": "OpenBeamWorld/boars",
+   "last_changed_in": "94dfb96823cb0e90f72859f1861172c593f5f166"
+  },
+  "source/main/physics/ContactFrictionResponse.h": {
+   "sha256": "32adf846033cd039752b22c92a5f3986c48280875fd380ae1af0733349635b5c",
+   "repository": "OpenBeamWorld/openbeam",
+   "last_changed_in": "1d581e85efce98345938d4f528a026c8103001a5"
+  },
+  "source/main/physics/ContactPenetration.h": {
+   "sha256": "15136c1b1ed366664f3575254b990d3b518e0d2ab7a04111d2b3ede1a784df64",
+   "repository": "OpenBeamWorld/openbeam",
+   "last_changed_in": "3da1a9001cfbff6491ea985c5863147128cd8fe7"
+  }
+ }
+}

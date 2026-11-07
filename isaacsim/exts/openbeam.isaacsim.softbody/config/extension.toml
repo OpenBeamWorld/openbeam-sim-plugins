@@ -1,0 +1,21 @@
+[package]
+version = "0.1.0"
+title = "OpenBeam Soft Body"
+description = "OpenBeam's JBeam soft-body physics (beam networks that dent, yield and tear) coupled two ways to PhysX rigid bodies."
+category = "Simulation"
+keywords = ["openbeam", "jbeam", "soft body", "deformation", "physics"]
+authors = ["OpenBeam"]
+readme = "docs/README.md"
+changelog = "docs/CHANGELOG.md"
+
+[dependencies]
+"omni.usd" = {}
+"omni.timeline" = {}
+"omni.physx" = {}
+"omni.physics.tensors" = {}
+"isaacsim.core.simulation_manager" = {}
+"omni.kit.actions.core" = { optional = true }   # the Window menu entry, where the app has menus
+"omni.kit.menu.utils" = { optional = true }
+
+[[python.module]]
+name = "openbeam.isaacsim.softbody"

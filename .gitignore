@@ -1,0 +1,7 @@
+build/
+third_party/mujoco-*/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.png
+!docs/**/*.png
