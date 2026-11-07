@@ -56,10 +56,9 @@
 
 namespace {
 
-constexpr float kDt = RoR::FixedStep::SECONDS_F;
-constexpr double kDtD = RoR::FixedStep::SECONDS;
+constexpr double kDefaultStep = RoR::FixedStep::SECONDS; // the game's 0.5 ms
 // Ten simulated seconds per call at most, so a bad dt cannot hang the host.
-constexpr long kMaxStepsPerAdvance = 20000;
+constexpr long kMaxStepsPerAdvance = 200000;
 
 struct V3
 {
@@ -122,6 +121,11 @@ struct Node
     float friction_coef = 1.0f;
     bool fixed = false;
     bool collision = true;
+    // A node welded to a collider does not also touch it; one just released
+    // ignores it until it is clear of it, as an opening gripper lets go,
+    // rather than being thrown out of an overlap it never chose.
+    int held_by = -1;
+    int released_from = -1;
 };
 
 struct Beam
@@ -191,6 +195,25 @@ struct ob_world
     std::vector<Plane> planes;
     std::vector<Collider> colliders;
     V3 gravity{0.0f, 0.0f, -9.81f};
+    double step = kDefaultStep;      // seconds per step; the laws take it as an input
+    float node_radius = 0.0f;        // contact radius of every node
+    float node_damping = 0.0f;       // 1/s: a force -node_damping m v on every node (off by default)
+    // Nodes welded to a collider: the collider carries them, and the force
+    // that takes is put on the collider.
+    struct Attachment
+    {
+        std::uint32_t node = 0;
+        int collider = -1;
+        D3 local; // the node's position in the collider's frame when attached
+        // A weld until released. A release makes the grip a spring-damper
+        // whose stiffness fades with `strength` to zero at release_rate per
+        // second, as a gripper opens: an instant release sends a stress wave
+        // through a bent structure that a real one never sees.
+        float strength = 1.0f;
+        float release_rate = 0.0f;
+        D3 hold; // the force the weld last applied: an opening grip starts from it
+    };
+    std::vector<Attachment> attachments;
     double carry = 0.0;
     unsigned long long steps = 0, contacts = 0;
     unsigned int skipped = 0;
@@ -204,6 +227,7 @@ struct ob_world
         steps = 0;
         contacts = 0;
         last_advance_us = 0.0;
+        attachments.clear();
         for (Collider& c : colliders)
         {
             c.sum_force = c.sum_moment = D3{};
@@ -221,7 +245,7 @@ struct ob_world
         const float vnormal = Dot(vrel, normal);
         const float fnormal = Dot(n.f, normal);
         const float reaction = RoR::ContactPenetration::NormalReaction(fnormal, vnormal, 0.0f - penetration,
-            n.m, kDt, RoR::ContactPenetration::kMaxStaticSeparationSpeed);
+            n.m, static_cast<float>(step), RoR::ContactPenetration::kMaxStaticSeparationSpeed);
         if (!(reaction > 0.0f))
             return V3{};
         ++contacts;
@@ -235,14 +259,14 @@ struct ob_world
         if (slipv < gm.va && g_reaction > 0.0f && Dot(slipf, slipf) <= ms_g * ms_g)
         {
             const RoR::ContactFrictionResponse::Result s = RoR::ContactFrictionResponse::NoReversal(
-                RoR::ContactFrictionResponse::StaticSmoothing(slipv, gm.va, ms_g), n.m, slipv, kDtD);
+                RoR::ContactFrictionResponse::StaticSmoothing(slipv, gm.va, ms_g), n.m, slipv, step);
             const float ff = s.valid() ? -static_cast<float>(s.opposing_magnitude) : 0.0f;
             return normal * reaction + slip * ff - slipf;
         }
         const float g = gm.mc + (gm.ms - gm.mc) * std::exp(-std::pow(slipv / gm.vs, gm.alpha));
         float ff = -(g + std::min(gm.t2 * slipv, 5.0f)) * g_reaction;
         const RoR::ContactFrictionResponse::Result s = RoR::ContactFrictionResponse::SlidingNoReversal(
-            -ff, n.m, slipv, Dot(slipf, slip), kDtD);
+            -ff, n.m, slipv, Dot(slipf, slip), step);
         ff = s.valid() ? -static_cast<float>(s.opposing_magnitude) : 0.0f;
         return normal * reaction + slip * ff;
     }
@@ -274,7 +298,7 @@ struct ob_world
         input.endpoints.endpoint_2_velocity_mps = {{p2.v.x, p2.v.y, p2.v.z}};
         input.reference_length_m = beam.L;
         input.damping_coefficient = beam.d;
-        input.time_step = kDt;
+        input.time_step = static_cast<float>(step); // the game passes its float step
         input.mass_1 = p1.m;
         input.mass_2 = p2.m;
         input.movable_1 = !p1.fixed;
@@ -320,7 +344,7 @@ struct ob_world
         const float difftoBeamL = dislen - beam.L;
         const float k = beam.k;
         const RoR::BeamAxialResponse::DampingResult damping = RoR::BeamAxialResponse::ComputeDamping(
-            v, beam.d, kDt, p1.m, p2.m, !p1.fixed, !p2.fixed);
+            v, beam.d, static_cast<float>(step), p1.m, p2.m, !p1.fixed, !p2.fixed);
         float slen = -k * difftoBeamL + damping.force;
         beam.stress = slen;
         float len = std::abs(slen);
@@ -397,13 +421,16 @@ struct ob_world
                 continue;
             for (const Plane& p : planes)
             {
-                const float penetration = -Dot(n.x - p.point, p.normal);
+                const float penetration = node_radius - Dot(n.x - p.point, p.normal);
                 if (penetration < 0.0f)
                     continue;
                 n.f = n.f + SurfaceContact(i, p.gm, p.normal, penetration, V3{});
             }
-            for (Collider& c : colliders)
+            for (std::size_t ci = 0; ci < colliders.size(); ++ci)
             {
+                Collider& c = colliders[ci];
+                if (n.held_by == static_cast<int>(ci))
+                    continue;
                 const D3 center = c.position + c.velocity * t;
                 const D3 p = ToD(n.x);
                 const D3 local = RotateT(c.rotation, p - center);
@@ -416,10 +443,15 @@ struct ob_world
                         axis_point.z = std::max(-c.size[1], std::min(c.size[1], local.z));
                     const D3 d = local - axis_point;
                     const double dist = std::sqrt(Dot(d, d));
-                    if (!(dist < c.size[0]))
+                    const double reach = c.size[0] + node_radius;
+                    if (!(dist < reach))
+                    {
+                        if (n.released_from == static_cast<int>(ci))
+                            n.released_from = -1; // clear of the collider that let it go
                         continue;
+                    }
                     normal_local = dist > 1.0e-9 ? d * (1.0 / dist) : D3{0.0, 0.0, 1.0};
-                    penetration = c.size[0] - dist;
+                    penetration = reach - dist;
                 }
                 else
                 {
@@ -428,7 +460,7 @@ struct ob_world
                     double best_depth = 0.0;
                     for (int a = 0; a < 3; ++a)
                     {
-                        const double depth = c.size[a] - std::abs(l[a]);
+                        const double depth = c.size[a] + node_radius - std::abs(l[a]);
                         if (!(depth > 0.0))
                         {
                             best = -1;
@@ -441,12 +473,18 @@ struct ob_world
                         }
                     }
                     if (best < 0)
+                    {
+                        if (n.released_from == static_cast<int>(ci))
+                            n.released_from = -1;
                         continue;
+                    }
                     double nl[3] = {0.0, 0.0, 0.0};
                     nl[best] = l[best] < 0.0 ? -1.0 : 1.0;
                     normal_local = {nl[0], nl[1], nl[2]};
                     penetration = best_depth;
                 }
+                if (n.released_from == static_cast<int>(ci))
+                    continue; // still inside the collider that let it go
                 const D3 normal = Rotate(c.rotation, normal_local);
                 const D3 surface_velocity = c.velocity + Cross(c.angular_velocity, p - center);
                 const V3 f = SurfaceContact(i, c.gm, ToF(normal), static_cast<float>(penetration),
@@ -457,6 +495,69 @@ struct ob_world
                 c.sum_moment = c.sum_moment + Cross(p, on_collider);
             }
         }
+    }
+
+    // A welded node lands, after this step's kick and drift, on the point of
+    // its collider it was attached at; the force that takes goes on the collider.
+    void Attachments(double t)
+    {
+        for (Attachment& a : attachments)
+        {
+            Node& n = nodes[a.node];
+            Collider& c = colliders[static_cast<std::size_t>(a.collider)];
+            const double t1 = t + step;
+            const D3 arm = Rotate(c.rotation, a.local);
+            // Within an advance the collider's orientation is held; its spin
+            // moves the carried point to first order.
+            D3 f_needed;
+            if (a.release_rate > 0.0f)
+            {
+                // Opening: a spring-damper to the carried point, stiff at first
+                // (natural frequency 0.5 / step), softening to nothing.
+                const double m = static_cast<double>(n.m);
+                const double w0 = 0.5 / step;
+                const double k = m * w0 * w0 * static_cast<double>(a.strength);
+                const D3 point = c.position + c.velocity * t + arm + Cross(c.angular_velocity, arm) * t;
+                const D3 point_velocity = c.velocity + Cross(c.angular_velocity, arm);
+                f_needed = a.hold * static_cast<double>(a.strength) + (point - ToD(n.x)) * k +
+                    (point_velocity - ToD(n.v)) * (2.0 * std::sqrt(k * m));
+            }
+            else
+            {
+                const D3 target = c.position + c.velocity * t1 + arm + Cross(c.angular_velocity, arm) * t1;
+                const D3 v_new = (target - ToD(n.x)) * (1.0 / step);
+                f_needed = (v_new - ToD(n.v)) * (static_cast<double>(n.m) / step) - ToD(n.f);
+                a.hold = f_needed;
+            }
+            n.f = n.f + ToF(f_needed);
+            const D3 on_collider = f_needed * -1.0;
+            c.sum_force = c.sum_force + on_collider;
+            c.sum_moment = c.sum_moment + Cross(ToD(n.x), on_collider);
+        }
+    }
+
+    // Fades releasing grips and drops the ones that have let go.
+    void UpdateReleases()
+    {
+        bool done = false;
+        for (Attachment& a : attachments)
+        {
+            if (a.release_rate > 0.0f)
+            {
+                a.strength -= a.release_rate * static_cast<float>(step);
+                if (a.strength <= 0.5f * a.release_rate * static_cast<float>(step))
+                    a.strength = 0.0f; // done: float steps must not leave a sliver of grip
+                if (a.strength <= 0.0f)
+                {
+                    nodes[a.node].held_by = -1;
+                    nodes[a.node].released_from = a.collider;
+                    done = true;
+                }
+            }
+        }
+        if (done)
+            attachments.erase(std::remove_if(attachments.begin(), attachments.end(),
+                [](const Attachment& a) { return a.strength <= 0.0f; }), attachments.end());
     }
 
     void Step(double t)
@@ -472,13 +573,21 @@ struct ob_world
             else
                 LegacyBeam(i);
         }
+        if (node_damping > 0.0f)
+        {
+            for (Node& n : nodes)
+                n.f = n.f - n.v * (node_damping * n.m);
+        }
         Contacts(t);
+        Attachments(t);
+        UpdateReleases();
+        const float h = static_cast<float>(step);
         for (Node& n : nodes)
         {
             if (n.fixed)
                 continue;
-            n.v = n.v + n.f * (kDt / n.m);
-            n.x = n.x + n.v * kDt;
+            n.v = n.v + n.f * (h / n.m);
+            n.x = n.x + n.v * h;
         }
         ++steps;
     }
@@ -736,16 +845,209 @@ void ob_world_set_collider_state(ob_world* world, int collider, const double pos
     c.angular_velocity = Load(angular_velocity);
 }
 
+int ob_world_set_beam_material(ob_world* world, int beam, const ob_beam_material* material)
+{
+    if (!world || !material || beam < 0 || static_cast<std::size_t>(beam) >= world->beams.size())
+        return -1;
+    RoR::CalibratedBeamMaterialAdapter::Configuration configuration;
+    configuration.cross_section_area_m2 = material->area_m2;
+    configuration.material.elastic_modulus = material->elastic_modulus_pa;
+    configuration.material.yield_stress = material->yield_stress_pa;
+    configuration.material.hardening_modulus = material->hardening_modulus_pa;
+    configuration.material.damage_onset_plastic_strain = material->damage_onset_plastic_strain;
+    configuration.material.damage_driver_capacity_density = material->damage_capacity_j_per_m3;
+    // Configure a copy first: a refused material leaves the beam as it was.
+    Beam configured = world->rest_beams[static_cast<std::size_t>(beam)];
+    configured.runtime = RoR::CalibratedBeamMaterialAdapter::Runtime{};
+    if (!RoR::CalibratedBeamMaterialAdapter::TryConfigure(configured.runtime, configuration))
+        return -1;
+    configured.calibrated = true;
+    // The axial stiffness the legacy readouts and the stability estimate use.
+    configured.k = static_cast<float>(material->elastic_modulus_pa * material->area_m2 / configured.L);
+    world->rest_beams[static_cast<std::size_t>(beam)] = configured;
+    Beam& live = world->beams[static_cast<std::size_t>(beam)];
+    const Beam history = live;
+    live = configured;
+    live.L = history.L;
+    live.broken = history.broken;
+    live.deformed = false;
+    return 0;
+}
+
+int ob_world_load_materials(ob_world* world, const char* path, char* err, size_t err_len)
+{
+    if (!world || !path)
+        return -1;
+    std::FILE* file = std::fopen(path, "rb");
+    if (!file)
+    {
+        WriteError(err, err_len, std::string("cannot open ") + path);
+        return -1;
+    }
+    std::string text;
+    char chunk[4096];
+    for (std::size_t n; (n = std::fread(chunk, 1, sizeof(chunk), file)) > 0;)
+        text.append(chunk, n);
+    std::fclose(file);
+    int configured = 0, line_number = 0;
+    std::size_t start = 0;
+    while (start < text.size())
+    {
+        std::size_t end = text.find('\n', start);
+        if (end == std::string::npos)
+            end = text.size();
+        std::string line = text.substr(start, end - start);
+        start = end + 1;
+        ++line_number;
+        const std::size_t hash = line.find('#');
+        if (hash != std::string::npos)
+            line.resize(hash);
+        long first = 0, count = 0;
+        ob_beam_material m{};
+        const int read = std::sscanf(line.c_str(), "%ld %ld %lf %lf %lf %lf %lf %lf", &first, &count, &m.area_m2,
+            &m.elastic_modulus_pa, &m.yield_stress_pa, &m.hardening_modulus_pa, &m.damage_onset_plastic_strain,
+            &m.damage_capacity_j_per_m3);
+        if (read <= 0)
+            continue; // blank or comment
+        if (read != 8 || first < 0 || count < 0 ||
+            static_cast<std::size_t>(first + count) > world->beams.size())
+        {
+            WriteError(err, err_len, std::string(path) + ":" + std::to_string(line_number) +
+                ": expected 'first count area E yield hardening damage_onset capacity' within the beams");
+            return -1;
+        }
+        for (long b = first; b < first + count; ++b)
+        {
+            if (ob_world_set_beam_material(world, static_cast<int>(b), &m) != 0)
+            {
+                WriteError(err, err_len, std::string(path) + ":" + std::to_string(line_number) +
+                    ": the material refused these parameters");
+                return -1;
+            }
+            ++configured;
+        }
+    }
+    return configured;
+}
+
+int ob_world_set_step(ob_world* world, double step)
+{
+    if (!world || !std::isfinite(step) || !(step >= 1.0e-6 && step <= kDefaultStep))
+        return -1;
+    world->step = step;
+    world->carry = 0.0;
+    return 0;
+}
+
+double ob_world_get_step(const ob_world* world) { return world ? world->step : 0.0; }
+
+void ob_world_set_node_radius(ob_world* world, double radius)
+{
+    if (world && radius >= 0.0 && std::isfinite(radius))
+        world->node_radius = static_cast<float>(radius);
+}
+
+void ob_world_set_node_damping(ob_world* world, double per_second)
+{
+    if (world && per_second >= 0.0 && std::isfinite(per_second))
+        world->node_damping = static_cast<float>(per_second);
+}
+
+int ob_world_find_node(const ob_world* world, const char* id)
+{
+    if (!world || !id)
+        return -1;
+    for (std::size_t i = 0; i < world->node_ids.size(); ++i)
+    {
+        if (world->node_ids[i] == id)
+            return static_cast<int>(i);
+    }
+    return -1;
+}
+
+int ob_world_detach_node(ob_world* world, int node)
+{
+    if (!world)
+        return -1;
+    const std::size_t before = world->attachments.size();
+    for (const ob_world::Attachment& a : world->attachments)
+    {
+        if (static_cast<int>(a.node) == node)
+        {
+            world->nodes[a.node].held_by = -1;
+            world->nodes[a.node].released_from = a.collider;
+        }
+    }
+    world->attachments.erase(std::remove_if(world->attachments.begin(), world->attachments.end(),
+        [node](const ob_world::Attachment& a) { return static_cast<int>(a.node) == node; }),
+        world->attachments.end());
+    return world->attachments.size() < before ? 0 : -1;
+}
+
+int ob_world_attach_node(ob_world* world, int node, int collider)
+{
+    if (!world || node < 0 || static_cast<std::size_t>(node) >= world->nodes.size() || collider < 0 ||
+        static_cast<std::size_t>(collider) >= world->colliders.size() ||
+        world->nodes[static_cast<std::size_t>(node)].fixed)
+        return -1;
+    ob_world_detach_node(world, node);
+    const Collider& c = world->colliders[static_cast<std::size_t>(collider)];
+    ob_world::Attachment a;
+    a.node = static_cast<std::uint32_t>(node);
+    a.collider = collider;
+    a.local = RotateT(c.rotation, ToD(world->nodes[static_cast<std::size_t>(node)].x) - c.position);
+    world->attachments.push_back(a);
+    world->nodes[static_cast<std::size_t>(node)].held_by = collider;
+    world->nodes[static_cast<std::size_t>(node)].released_from = -1;
+    return 0;
+}
+
+int ob_world_release_node(ob_world* world, int node, double seconds)
+{
+    if (!world || !std::isfinite(seconds) || seconds < 0.0)
+        return -1;
+    if (seconds == 0.0)
+        return ob_world_detach_node(world, node);
+    int found = -1;
+    for (ob_world::Attachment& a : world->attachments)
+    {
+        if (static_cast<int>(a.node) == node)
+        {
+            a.release_rate = static_cast<float>(a.strength / seconds);
+            found = 0;
+        }
+    }
+    return found;
+}
+
+void ob_world_detach_all(ob_world* world)
+{
+    if (!world)
+        return;
+    for (const ob_world::Attachment& a : world->attachments)
+    {
+        world->nodes[a.node].held_by = -1;
+        world->nodes[a.node].released_from = a.collider;
+    }
+    world->attachments.clear();
+}
+
+int ob_world_attached_count(const ob_world* world)
+{
+    return world ? static_cast<int>(world->attachments.size()) : 0;
+}
+
 int ob_world_advance(ob_world* world, double dt)
 {
     if (!world || !(dt > 0.0) || !std::isfinite(dt))
         return 0;
     const auto t0 = std::chrono::steady_clock::now();
     world->carry += dt;
-    long n = static_cast<long>(std::floor(world->carry / kDtD + 1.0e-6));
+    const double h = world->step;
+    long n = static_cast<long>(std::floor(world->carry / h + 1.0e-6));
     n = std::max(0L, std::min(n, kMaxStepsPerAdvance));
-    world->carry = std::max(0.0, world->carry - static_cast<double>(n) * kDtD);
-    if (world->carry > kDtD)
+    world->carry = std::max(0.0, world->carry - static_cast<double>(n) * h);
+    if (world->carry > h)
         world->carry = 0.0; // clamped by kMaxStepsPerAdvance: drop the backlog
     for (Collider& c : world->colliders)
     {
@@ -753,7 +1055,7 @@ int ob_world_advance(ob_world* world, double dt)
         c.steps = 0;
     }
     for (long i = 0; i < n; ++i)
-        world->Step(static_cast<double>(i) * kDtD);
+        world->Step(static_cast<double>(i) * h);
     world->last_advance_us =
         std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
     return static_cast<int>(n);

@@ -33,6 +33,7 @@
 #include <cstring>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #if defined(_WIN32)
@@ -44,7 +45,7 @@
 namespace {
 
 const char* const kAttributes[] = {"jbeam", "pos", "quat", "colliders", "grounds", "stress_scale",
-    "strain_scale", "beam_width"};
+    "strain_scale", "beam_width", "step", "node_radius", "node_damping", "attach", "materials", "release"};
 constexpr int kSensorDim = 6;
 
 struct ColliderBinding
@@ -61,9 +62,14 @@ struct Instance
     double last_time = -1.0;
     bool advanced = false;
     bool planes_added = false; // planes are static: posed once, kept across resets
+    // "node:geom" welds from the attach attribute, made on the first compute
+    // and again after every reset (a reset removes attachments).
+    std::vector<std::pair<std::string, std::string>> static_attachments;
+    bool attachments_made = false;
     double stress_scale = 20000.0; // N of live load drawn full yellow
     double strain_scale = 0.05;    // plastic strain drawn full red
     double beam_width = 0.012;
+    double release_seconds = 0.05; // how long a released grip takes to open
     std::vector<double> scratch_positions;
     std::vector<int> pairs;
     std::vector<float> stress, rest, plastic, damage;
@@ -159,6 +165,21 @@ void AddPlanes(const mjModel* m, const mjData* d, Instance& inst)
     }
 }
 
+// A relative path that is not found from the working directory is tried
+// against OPENBEAM_ASSET_DIR (MuJoCo does not tell a plugin where its model
+// file was).
+std::string Resolve(const std::string& path)
+{
+    if (FILE* probe = std::fopen(path.c_str(), "rb"))
+    {
+        std::fclose(probe);
+        return path;
+    }
+    if (const char* dir = std::getenv("OPENBEAM_ASSET_DIR"))
+        return std::string(dir) + "/" + path;
+    return path;
+}
+
 int Init(const mjModel* m, mjData* d, int instance)
 {
     const std::string path = Config(m, instance, "jbeam");
@@ -175,19 +196,19 @@ int Init(const mjModel* m, mjData* d, int instance)
         mju_warning("openbeam.softbody: 'pos' needs 3 numbers and 'quat' 4");
         return -1;
     }
-    // A relative path that is not found from the working directory is tried
-    // against OPENBEAM_ASSET_DIR (MuJoCo does not tell a plugin where its
-    // model file was).
-    std::string resolved = path;
-    if (FILE* probe = std::fopen(resolved.c_str(), "rb"))
-        std::fclose(probe);
-    else if (const char* dir = std::getenv("OPENBEAM_ASSET_DIR"))
-        resolved = std::string(dir) + "/" + path;
+    const std::string resolved = Resolve(path);
     char err[512] = {0};
     ob_world* world = ob_world_create_from_jbeam_file(resolved.c_str(), pos, quat, err, sizeof(err));
     if (!world)
     {
         mju_warning("openbeam.softbody: %s", err);
+        return -1;
+    }
+    const std::string materials = Config(m, instance, "materials");
+    if (!materials.empty() && ob_world_load_materials(world, Resolve(materials).c_str(), err, sizeof(err)) < 0)
+    {
+        mju_warning("openbeam.softbody: %s", err);
+        ob_world_destroy(world);
         return -1;
     }
     Instance* inst = new Instance();
@@ -199,6 +220,22 @@ int Init(const mjModel* m, mjData* d, int instance)
         inst->strain_scale = value;
     if (ParseNumbers(Config(m, instance, "beam_width"), 1, &value) && value > 0.0)
         inst->beam_width = value;
+    if (ParseNumbers(Config(m, instance, "release"), 1, &value) && value >= 0.0)
+        inst->release_seconds = value;
+    if (ParseNumbers(Config(m, instance, "step"), 1, &value) && ob_world_set_step(world, value) != 0)
+        mju_warning("openbeam.softbody: 'step' must be from 1e-6 to 0.0005 s; keeping 0.0005");
+    if (ParseNumbers(Config(m, instance, "node_radius"), 1, &value))
+        ob_world_set_node_radius(world, value);
+    if (ParseNumbers(Config(m, instance, "node_damping"), 1, &value))
+        ob_world_set_node_damping(world, value);
+    for (const std::string& pair : Words(Config(m, instance, "attach")))
+    {
+        const std::size_t colon = pair.rfind(':');
+        if (colon == std::string::npos || colon == 0 || colon + 1 == pair.size())
+            mju_warning("openbeam.softbody: attach entries are node:geom, got '%s'", pair.c_str());
+        else
+            inst->static_attachments.emplace_back(pair.substr(0, colon), pair.substr(colon + 1));
+    }
     const double gravity[3] = {m->opt.gravity[0], m->opt.gravity[1], m->opt.gravity[2]};
     ob_world_set_gravity(world, gravity);
     BindScene(m, instance, *inst);
@@ -231,6 +268,7 @@ void Reset(const mjModel*, mjtNum*, void* plugin_data, int)
     ob_world_reset(inst->world);
     inst->last_time = -1.0;
     inst->advanced = false;
+    inst->attachments_made = false;
 }
 
 void ApplyWrenches(const mjModel* m, mjData* d, Instance& inst)
@@ -246,6 +284,54 @@ void ApplyWrenches(const mjModel* m, mjData* d, Instance& inst)
     }
 }
 
+void SetColliderState(const mjModel* m, const mjData* d, const Instance& inst, const ColliderBinding& c)
+{
+    mjtNum velocity[6]; // (angular, linear), world frame, at the geom centre
+    mj_objectVelocity(m, d, mjOBJ_GEOM, c.geom, velocity, 0);
+    double q[4];
+    GeomQuat(d, c.geom, q);
+    ob_world_set_collider_state(inst.world, c.core_id, d->geom_xpos + 3 * c.geom, q, velocity + 3, velocity);
+}
+
+const ColliderBinding* FindCollider(const mjModel* m, const Instance& inst, const char* geom_name)
+{
+    const int g = geom_name ? mj_name2id(m, mjOBJ_GEOM, geom_name) : -1;
+    for (const ColliderBinding& c : inst.colliders)
+        if (c.geom == g && c.core_id >= 0)
+            return &c;
+    return nullptr;
+}
+
+// The nodes a pattern names: one JBeam id, or every id starting with the text before a trailing '*'.
+std::vector<int> MatchNodes(const ob_world* world, const std::string& pattern)
+{
+    std::vector<int> nodes;
+    const bool prefix = !pattern.empty() && pattern.back() == '*';
+    const std::string stem = prefix ? pattern.substr(0, pattern.size() - 1) : pattern;
+    const int n = ob_world_node_count(world);
+    for (int i = 0; i < n; ++i)
+    {
+        const std::string id = ob_world_node_id(world, i);
+        if (prefix ? id.compare(0, stem.size(), stem) == 0 : id == stem)
+            nodes.push_back(i);
+    }
+    return nodes;
+}
+
+// Welds the matching nodes to a collider geom at the current state; returns how many.
+int Attach(const mjModel* m, const mjData* d, Instance& inst, const std::string& pattern, const char* geom_name)
+{
+    const ColliderBinding* c = FindCollider(m, inst, geom_name);
+    if (!c)
+        return -1;
+    SetColliderState(m, d, inst, *c);
+    int attached = 0;
+    for (int node : MatchNodes(inst.world, pattern))
+        if (ob_world_attach_node(inst.world, node, c->core_id) == 0)
+            ++attached;
+    return attached;
+}
+
 void ComputePassive(const mjModel* m, mjData* d, Instance& inst)
 {
     if (!inst.planes_added)
@@ -257,13 +343,16 @@ void ComputePassive(const mjModel* m, mjData* d, Instance& inst)
     {
         for (const ColliderBinding& c : inst.colliders)
         {
-            if (c.core_id < 0)
-                continue;
-            mjtNum velocity[6]; // (angular, linear), world frame, at the geom centre
-            mj_objectVelocity(m, d, mjOBJ_GEOM, c.geom, velocity, 0);
-            double q[4];
-            GeomQuat(d, c.geom, q);
-            ob_world_set_collider_state(inst.world, c.core_id, d->geom_xpos + 3 * c.geom, q, velocity + 3, velocity);
+            if (c.core_id >= 0)
+                SetColliderState(m, d, inst, c);
+        }
+        if (!inst.attachments_made)
+        {
+            for (const auto& [node, geom] : inst.static_attachments)
+                if (Attach(m, d, inst, node, geom.c_str()) <= 0)
+                    mju_warning("openbeam.softbody: attach '%s:%s' matched no node or collider", node.c_str(),
+                        geom.c_str());
+            inst.attachments_made = true;
         }
         ob_world_advance(inst.world, m->opt.timestep);
         inst.last_time = d->time;
@@ -376,6 +465,37 @@ OB_MUJOCO_EXPORT ob_world* openbeam_mujoco_world(const mjData* d, int instance)
         return nullptr;
     const Instance* inst = Get(d, instance);
     return inst ? inst->world : nullptr;
+}
+
+// Welds the nodes a pattern names (a JBeam id, or a prefix ending in '*') to
+// a collider geom of the instance, where they are now: a grasp. Returns the
+// number of nodes attached, or -1 if the geom is not one of its colliders.
+OB_MUJOCO_EXPORT int openbeam_mujoco_attach(const mjModel* m, const mjData* d, int instance, const char* nodes,
+    const char* geom)
+{
+    Instance* inst = (m && d && instance >= 0 && nodes) ? Get(d, instance) : nullptr;
+    return inst ? Attach(m, d, *inst, nodes, geom) : -1;
+}
+
+// Releases the nodes a pattern names, or every node if it is null: the grip
+// opens over the instance's `release` time (default 0.05 s). Returns the
+// number released.
+OB_MUJOCO_EXPORT int openbeam_mujoco_detach(const mjData* d, int instance, const char* nodes)
+{
+    Instance* inst = (d && instance >= 0) ? Get(d, instance) : nullptr;
+    if (!inst)
+        return 0;
+    int released = 0;
+    const int n = ob_world_node_count(inst->world);
+    const std::vector<int> matched = nodes ? MatchNodes(inst->world, nodes) : std::vector<int>();
+    for (int node = 0; node < n; ++node)
+    {
+        if (nodes && std::find(matched.begin(), matched.end(), node) == matched.end())
+            continue;
+        if (ob_world_release_node(inst->world, node, inst->release_seconds) == 0)
+            ++released;
+    }
+    return released;
 }
 
 mjPLUGIN_LIB_INIT(openbeam_softbody)

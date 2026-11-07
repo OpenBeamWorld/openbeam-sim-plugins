@@ -25,7 +25,7 @@ target_include_directories(openbeam_core_objects
         "${OPENBEAM_ENGINE_MAIN}/physics"
         "${OPENBEAM_ENGINE_MAIN}/resources/beamng"
         "${OPENBEAM_GAME_MAIN}/physics")
-target_compile_definitions(openbeam_core_objects PRIVATE OPENBEAM_CORE_BUILD_SHARED)
+target_compile_definitions(openbeam_core_objects PRIVATE OPENBEAM_CORE_BUILD_SHARED _CRT_SECURE_NO_WARNINGS)
 
 add_library(openbeam_core SHARED $<TARGET_OBJECTS:openbeam_core_objects>)
 target_include_directories(openbeam_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")

@@ -65,6 +65,13 @@ def load_plugin() -> ctypes.CDLL:
         lib.ob_world_get_node_positions.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
         lib.ob_world_get_beam_state.argtypes = [ctypes.c_void_p] * 5
         lib.ob_world_get_beam_damage.argtypes = [ctypes.c_void_p] * 3
+        lib.ob_world_get_step.restype = ctypes.c_double
+        lib.ob_world_get_step.argtypes = [ctypes.c_void_p]
+        lib.openbeam_mujoco_attach.restype = ctypes.c_int
+        lib.openbeam_mujoco_attach.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_char_p,
+                                               ctypes.c_char_p]
+        lib.openbeam_mujoco_detach.restype = ctypes.c_int
+        lib.openbeam_mujoco_detach.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_char_p]
         lib.ob_world_total_mass.restype = ctypes.c_double
         lib.ob_world_total_mass.argtypes = [ctypes.c_void_p]
         _LOADED[path] = lib

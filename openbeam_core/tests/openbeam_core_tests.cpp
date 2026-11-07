@@ -7,6 +7,7 @@
 
 #include "openbeam_core.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -341,6 +342,116 @@ void TestPlacement()
     ob_world_destroy(w);
 }
 
+
+// A chain of light, stiff segments, like a cable: unstable at the game's
+// 0.5 ms step, stable at 0.05 ms.
+std::string Chain(int n, double dx, double node_weight, double spring)
+{
+    std::string nodes = "\"nodes\":[[\"id\",\"posX\",\"posY\",\"posZ\"],{\"nodeWeight\":" +
+        std::to_string(node_weight) + "},";
+    std::string beams = ",\"beams\":[[\"id1:\",\"id2:\"],{\"beamSpring\":" + std::to_string(spring) +
+        ",\"beamDamp\":0.05,\"beamDeform\":\"FLT_MAX\",\"beamStrength\":\"FLT_MAX\"},";
+    for (int i = 0; i < n; ++i)
+    {
+        char row[96];
+        std::snprintf(row, sizeof(row), "[\"c%d\",%.6f,0,1%s],", i, i * dx, i == 0 ? ",{\"fixed\":true}" : "");
+        nodes += row;
+        if (i + 1 < n)
+            beams += "[\"c" + std::to_string(i) + "\",\"c" + std::to_string(i + 1) + "\"],";
+    }
+    nodes.back() = ']';
+    beams.back() = ']';
+    return nodes + beams;
+}
+
+double FastestNode(const ob_world* w)
+{
+    std::vector<double> v(3 * static_cast<std::size_t>(ob_world_node_count(w)));
+    ob_world_get_node_velocities(w, v.data());
+    double fastest = 0.0;
+    for (double x : v)
+        fastest = std::isfinite(x) ? std::max(fastest, std::abs(x)) : 1e30;
+    return fastest;
+}
+
+void TestStep()
+{
+    // 1 g nodes, 20000 N/m: stable only well below 0.5 ms.
+    ob_world* w = Make(Chain(21, 0.025, 0.001, 20000.0));
+    CHECK(w != nullptr);
+    if (!w)
+        return;
+    CHECK(ob_world_get_step(w) == kH);
+    CHECK(ob_world_set_step(w, 0.0) == -1 && ob_world_set_step(w, 0.001) == -1);
+    ob_world* coarse = ob_world_clone(w);
+    ob_world_advance(coarse, 0.2);
+    const double coarse_v = FastestNode(coarse);
+    CHECK(ob_world_set_step(w, 0.00005) == 0 && ob_world_get_step(w) == 0.00005);
+    CHECK(ob_world_advance(w, 0.01) == 200);
+    ob_world_advance(w, 1.99);
+    const double fine_v = FastestNode(w);
+    std::printf("cable chain, 1 g nodes, 20000 N/m: fastest node %.3g m/s at 0.5 ms, %.3g m/s at 0.05 ms\n",
+        coarse_v, fine_v);
+    CHECK(coarse_v > 100.0);
+    CHECK(fine_v < 10.0);
+    ob_world_destroy(coarse);
+    ob_world_destroy(w);
+}
+
+void TestNodeRadius()
+{
+    ob_world* w = Make(Cube(0.5, 0.1, 10.0, "{\"beamSpring\":200000,\"beamDamp\":200}"));
+    CHECK(w != nullptr);
+    if (!w)
+        return;
+    const double origin[3] = {0, 0, 0}, up[3] = {0, 0, 1};
+    ob_world_add_plane(w, origin, up, nullptr);
+    ob_world_set_node_radius(w, 0.02);
+    ob_world_advance(w, 2.0);
+    const std::vector<double> p = Positions(w);
+    double lowest = 1e9;
+    for (std::size_t i = 2; i < p.size(); i += 3)
+        lowest = std::min(lowest, p[i]);
+    std::printf("node radius 0.02 m: lowest node z=%.4f m\n", lowest);
+    CHECK(std::abs(lowest - 0.02) < 0.003);
+    ob_world_destroy(w);
+}
+
+void TestAttachment()
+{
+    // One 2 kg node welded to a sphere that rises at 1 m/s: it rises with it,
+    // and the sphere carries its weight.
+    ob_world* w = Make("\"nodes\":[[\"id\",\"posX\",\"posY\",\"posZ\"],{\"nodeWeight\":2},[\"tip\",0,0,1]]");
+    CHECK(w != nullptr);
+    if (!w)
+        return;
+    CHECK(ob_world_find_node(w, "tip") == 0 && ob_world_find_node(w, "none") == -1);
+    const double size[3] = {0.05, 0, 0};
+    const int c = ob_world_add_collider(w, OB_SHAPE_SPHERE, size, nullptr);
+    double center[3] = {0, 0, 1.2};
+    const double q[4] = {1, 0, 0, 0}, v[3] = {0, 0, 1}, zero[3] = {0, 0, 0};
+    ob_world_set_collider_state(w, c, center, q, zero, zero);
+    CHECK(ob_world_attach_node(w, 0, c) == 0 && ob_world_attached_count(w) == 1);
+    CHECK(ob_world_attach_node(w, 0, 5) == -1);
+    for (int i = 0; i < 100; ++i)
+    {
+        ob_world_set_collider_state(w, c, center, q, v, zero);
+        ob_world_advance(w, 0.01);
+        center[2] += 0.01;
+    }
+    double force[3], torque[3];
+    ob_world_get_collider_wrench(w, c, center, force, torque);
+    const std::vector<double> p = Positions(w);
+    std::printf("attached node: z=%.4f m (sphere at %.4f), force on sphere %.3f N\n", p[2], center[2], force[2]);
+    CHECK(std::abs(p[2] - (center[2] - 0.2)) < 1e-4);
+    CHECK(std::abs(force[2] + 2.0 * kG) < 2e-3 * 2.0 * kG); // binary32 node state: 0.1 %
+    CHECK(ob_world_detach_node(w, 0) == 0 && ob_world_detach_node(w, 0) == -1);
+    ob_world_attach_node(w, 0, c);
+    ob_world_reset(w);
+    CHECK(ob_world_attached_count(w) == 0);
+    ob_world_destroy(w);
+}
+
 } // namespace
 
 int main()
@@ -354,6 +465,9 @@ int main()
     TestBreakGroup();
     TestCloneResetDigest();
     TestPlacement();
+    TestStep();
+    TestNodeRadius();
+    TestAttachment();
     if (g_failures)
     {
         std::printf("%d check(s) failed\n", g_failures);

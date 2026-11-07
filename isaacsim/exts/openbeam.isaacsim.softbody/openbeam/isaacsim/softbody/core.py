@@ -77,6 +77,17 @@ def _load() -> ctypes.CDLL:
         "ob_world_get_beam_nodes": (None, [P, P]),
         "ob_world_get_beam_state": (None, [P, P, P, P, P]),
         "ob_world_get_beam_damage": (None, [P, P, P]),
+        "ob_world_set_step": (I, [P, D]),
+        "ob_world_get_step": (D, [P]),
+        "ob_world_set_node_radius": (None, [P, D]),
+        "ob_world_set_node_damping": (None, [P, D]),
+        "ob_world_attach_node": (I, [P, I, I]),
+        "ob_world_detach_node": (I, [P, I]),
+        "ob_world_release_node": (I, [P, I, D]),
+        "ob_world_detach_all": (None, [P]),
+        "ob_world_attached_count": (I, [P]),
+        "ob_world_find_node": (I, [P, ctypes.c_char_p]),
+        "ob_world_load_materials": (I, [P, ctypes.c_char_p, ctypes.c_char_p, U]),
         "ob_world_get_stats": (None, [P, ctypes.POINTER(Stats)]),
         "ob_world_state_digest": (ctypes.c_ulonglong, [P]),
     }
@@ -181,6 +192,50 @@ class World:
         self._lib.ob_world_get_beam_state(self._h, stress.ctypes.data, rest.ctypes.data, strength.ctypes.data,
                                           broken.ctypes.data)
         return stress, rest, strength, broken.astype(bool)
+
+    def set_step(self, step: float) -> None:
+        if self._lib.ob_world_set_step(self._h, float(step)) != 0:
+            raise ValueError(f"step {step} s is outside 1e-6 to 0.0005 s")
+
+    @property
+    def step(self) -> float:
+        return self._lib.ob_world_get_step(self._h)
+
+    def set_node_radius(self, radius: float) -> None:
+        self._lib.ob_world_set_node_radius(self._h, float(radius))
+
+    def set_node_damping(self, per_second: float) -> None:
+        self._lib.ob_world_set_node_damping(self._h, float(per_second))
+
+    def find_node(self, node_id: str) -> int:
+        return self._lib.ob_world_find_node(self._h, node_id.encode())
+
+    def nodes_matching(self, pattern: str) -> list[int]:
+        """Node indices for a JBeam id, or for every id starting with the text before a trailing '*'."""
+        if pattern.endswith("*"):
+            return [i for i in range(self.node_count) if self.node_id(i).startswith(pattern[:-1])]
+        i = self.find_node(pattern)
+        return [i] if i >= 0 else []
+
+    def attach(self, pattern: str, collider: int) -> int:
+        """Welds the matching nodes to a collider where they are now; returns how many."""
+        return sum(self._lib.ob_world_attach_node(self._h, i, collider) == 0 for i in self.nodes_matching(pattern))
+
+    def detach(self, pattern: str | None = None, seconds: float = 0.0) -> None:
+        """Releases the matching nodes (all if pattern is None), the grip fading over `seconds`."""
+        if pattern is None and seconds == 0.0:
+            self._lib.ob_world_detach_all(self._h)
+            return
+        nodes = range(self.node_count) if pattern is None else self.nodes_matching(pattern)
+        for i in nodes:
+            self._lib.ob_world_release_node(self._h, i, float(seconds))
+
+    def load_materials(self, path) -> int:
+        err = ctypes.create_string_buffer(512)
+        n = self._lib.ob_world_load_materials(self._h, str(path).encode(), err, len(err))
+        if n < 0:
+            raise ValueError(err.value.decode(errors="replace"))
+        return n
 
     def beam_damage(self):
         """(permanent plastic strain, damage 0 intact to 1 torn) per beam."""
