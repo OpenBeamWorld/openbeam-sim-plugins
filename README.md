@@ -18,39 +18,6 @@ bend, yield, dent and tear. Contact couples them both ways. The host's
 colliders push OpenBeam's nodes, and the force the soft body puts back on each
 collider is applied to the host's body over the same interval.
 
-## What the core simulates, and what it does not
-
-`openbeam_core` is not the whole OpenBeam simulator. It compiles OpenBeam's
-own law sources (vendored in [`third_party/openbeam/`](third_party/openbeam/))
-and steps them in the game's order at its fixed 0.5 ms step, in binary32 node
-state:
-
-1. **JBeam loading** uses OpenBeam's parser, part resolver and structural tier.
-   Unauthored fields get OpenBeam's defaults. A `refNodes` frame is optional,
-   because a structure need not be a vehicle.
-2. **Beams.** Every NORMAL beam with a finite `beamDeform` uses the calibrated
-   elastoplastic damage material, as OpenBeam's JBeam import does. Any other
-   beam uses the classic spring and damper, with plastic rest-length
-   deformation, the `deformLimitExpansion` ceiling and breaking at
-   `beamStrength`. A broken beam breaks every beam in its `breakGroup`.
-3. **Contact** uses OpenBeam's dry penetration and friction laws, with the
-   concrete ground model, against the host's planes and its sphere, box and
-   capsule colliders, in the collider's moving frame.
-4. **Kick and drift**: v += F/m h, then x += v h, under gravity.
-
-It does **not** simulate:
-
-- wheels and tyres, hydros, shocks, or SUPPORT, BOUNDED and rope beams;
-- collision triangles, so there is no self-collision and no contact between
-  two soft bodies;
-- terrain meshes, or ground models other than concrete;
-- flexbodies, engines and drivetrains, or Lua.
-
-It suits crates, props and deformable structures, not driving a JBeam vehicle.
-Nodes are points, so a collider has to reach them: one narrower than the gaps
-between nodes can pass between them. Each call to `ob_world_advance(dt)` runs
-as many 0.5 ms steps as fit and carries the remainder to the next call.
-
 ## Build
 
 | Needs | Windows | Linux |
