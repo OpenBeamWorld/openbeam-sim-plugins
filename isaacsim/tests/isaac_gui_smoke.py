@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """The extension in the full Isaac Sim GUI (run by Kit's --exec, not pytest).
 
     isaac-sim.bat --ext-folder isaacsim/exts --enable openbeam.isaacsim.softbody

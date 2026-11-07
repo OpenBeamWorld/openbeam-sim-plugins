@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # OpenBeam simulator plugins: the soft-body core and its MuJoCo plugin.
 # Build and run instructions: README.md.
 cmake_minimum_required(VERSION 3.24)

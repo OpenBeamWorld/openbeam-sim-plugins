@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Builds the OpenBeam core and MuJoCo plugin on Windows (MSVC + CMake), installs
 # them to build\install and runs the core's tests. See README.md.
 #

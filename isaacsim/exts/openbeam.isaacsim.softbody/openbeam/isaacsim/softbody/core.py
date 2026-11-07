@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """ctypes binding of openbeam_core (openbeam_core/include/openbeam_core.h).
 
 Pure Python and NumPy: it runs inside Isaac Sim's Python and outside it. The

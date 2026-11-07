@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Kit extension entry point: checks the OpenBeam core and offers the demo scene."""
 
 from __future__ import annotations

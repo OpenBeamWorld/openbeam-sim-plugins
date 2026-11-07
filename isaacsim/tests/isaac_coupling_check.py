@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """In-Isaac checks of the openbeam.isaacsim.softbody extension (not pytest: Kit owns the process).
 
     <isaac-sim>/python.bat isaacsim/tests/isaac_coupling_check.py [--app stock|viewer|physics]

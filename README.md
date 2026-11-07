@@ -1,5 +1,7 @@
 # OpenBeam sim plugins
 
+[![CI](https://github.com/OpenBeamWorld/openbeam-sim-plugins/actions/workflows/ci.yml/badge.svg)](https://github.com/OpenBeamWorld/openbeam-sim-plugins/actions/workflows/ci.yml)
+
 [OpenBeam](https://github.com/OpenBeamWorld)'s soft-body physics as plugins for
 three robotics and simulation hosts:
 
@@ -84,6 +86,23 @@ the core's tests:
 Pass `-NoMujoco` (Windows) or `--no-mujoco` (Linux) to build the core alone,
 or `-MujocoRoot` / `MUJOCO_ROOT=` to use another MuJoCo 4.0.0 release.
 
+<details>
+<summary><b>Core contract tests: passed</b></summary>
+
+```text
+$ ctest --test-dir build -C Release -V
+rest: lowest node z=-0.00000 m, fastest node 0.00145 m/s
+collider: cube momentum 289.6528 kg m/s, collider impulse -289.6529 N s, peak force 38503.2 N
+legacy hang: stretch 0.002452 m (m g / k = 0.002452)
+calibrated 245 N: deformed=1 broken=0 stretch=0.2210 m
+calibrated 1471 N: broke after 0.36 s
+all openbeam_core checks passed
+1/1 Test #1: openbeam_core_tests ..............   Passed    0.10 sec
+100% tests passed out of 1
+```
+
+</details>
+
 ## MuJoCo
 
 Install MuJoCo's Python package, at the same version as the release whose
@@ -100,6 +119,29 @@ python -m venv .venv
 The demo swings a 300 kg MuJoCo wrecking ball into
 [`truss_crate.jbeam`](assets/truss_crate.jbeam), a 100-node, 603-beam crate.
 `--frames DIR` writes PNG frames instead.
+
+![The MuJoCo demo at 0.5, 1.0, 1.1 and 2.0 s: the ball strikes the crate, which dents, tips and slides away](docs/images/mujoco_wrecking_ball.png)
+
+*`mujoco/demo.py --frames`, at 0.5, 1.0, 1.1 and 2.0 s. The plugin draws each
+beam coloured by stress. The ball touches the crate at 0.944 s and stops
+dead. Beams yield and tear (15 torn, 49 yielded), and the crate slides away.*
+
+<details>
+<summary><b>MuJoCo plugin tests: 7 passed</b></summary>
+
+```text
+$ python -m pytest mujoco/tests -v
+mujoco/tests/test_openbeam_mujoco.py::test_plugin_registers_and_compiles PASSED
+mujoco/tests/test_openbeam_mujoco.py::test_bad_jbeam_path_fails_model_creation PASSED
+mujoco/tests/test_openbeam_mujoco.py::test_crate_rests_on_the_model_plane PASSED
+mujoco/tests/test_openbeam_mujoco.py::test_two_way_coupling_conserves_momentum PASSED
+mujoco/tests/test_openbeam_mujoco.py::test_one_advance_per_simulation_time PASSED
+mujoco/tests/test_openbeam_mujoco.py::test_copy_and_reset PASSED
+mujoco/tests/test_openbeam_mujoco.py::test_wrecking_ball_demo PASSED
+7 passed
+```
+
+</details>
 
 To use the plugin in your own model, load it and declare an instance:
 
@@ -182,6 +224,45 @@ In the full Isaac Sim app, add the extension folder and enable it. Open
 <isaac-sim>/isaac-sim.bat --ext-folder <repo>/isaacsim/exts --enable openbeam.isaacsim.softbody
 ```
 
+![Isaac Sim's RTX viewport after Window > OpenBeam > Wrecking Ball Demo and 3 s of Play: the PhysX ball has rebounded from the OpenBeam crate](docs/images/isaac_sim_gui.png)
+
+*The full Isaac Sim 6.2 GUI, after the GUI check below ran **Window > OpenBeam >
+Wrecking Ball Demo** and 3 s of Play: the RTX viewport, which the check saves.
+The PhysX ball has hit the OpenBeam crate and rebounded. The crate's beams are
+drawn as curves coloured by stress, and the crate has moved 0.76 m.*
+
+<details>
+<summary><b>Isaac Sim extension tests: 4 passed outside Isaac; 4/4, 5/5 and the GUI check inside it</b></summary>
+
+```text
+$ python -m pytest isaacsim/tests -v
+isaacsim/tests/test_core_binding.py::test_crate_loads_and_rests PASSED
+isaacsim/tests/test_core_binding.py::test_bad_path_raises PASSED
+isaacsim/tests/test_core_binding.py::test_moving_collider_momentum_balance PASSED
+isaacsim/tests/test_core_binding.py::test_reset_restores_digest PASSED
+4 passed
+
+$ <isaac-sim>/python.bat isaacsim/tests/isaac_coupling_check.py --app viewer
+OPENBEAM_CHECK {"check": "extension_enabled", "ok": true, "id": "openbeam.isaacsim.softbody-0.1.0"}
+OPENBEAM_CHECK {"check": "momentum_conserved", "ok": true, "crate_momentum": [645.18, 0.00056, 0.00073], "ball_velocity": [1.8494, -1.9e-06, -2.4e-06], "total_error": [0.000116, -2.4e-06, 7.6e-07]}
+OPENBEAM_CHECK {"check": "wrecking_ball", "ok": true, "peak_speed": 5.4058, "min_after_peak": 0.0021, "beams_broken": 15, "beams_deformed": 48, "centroid_shift": [0.6027, -0.0026, -0.0200]}
+OPENBEAM_CHECK {"check": "stop_resets", "ok": true}
+OPENBEAM_CHECK {"check": "menu_action", "ok": true, "action_found": true, "scene_built": true, "max_beam_point_shift_m": 0.7710}
+OPENBEAM_CHECKS PASSED (5/5)
+
+$ <isaac-sim>/python.bat isaacsim/tests/isaac_coupling_check.py --app physics
+OPENBEAM_CHECKS PASSED (4/4)    (menu_action skipped: this app has no menus)
+
+$ <isaac-sim>/isaac-sim.bat ... --exec isaacsim/tests/isaac_gui_smoke.py
+OPENBEAM_GUI {"ok": true, "menu_entry": true, "menu_action": ["openbeam.isaacsim.softbody", "load_wrecking_ball_demo"], "action_registered": true, "sim_time_s": 3.017, "frames": 181, "max_beam_point_shift_m": 0.7641}
+```
+
+The momentum check sends a free 300 kg PhysX sphere at 4 m/s into the free
+crate with gravity off. Ball and crate momentum together stay at 1200 kg m/s,
+to within 1.2e-4.
+
+</details>
+
 From Python, in any stage:
 
 ```python
@@ -220,6 +301,38 @@ box through the MuJoCo plugin. An episode succeeds when the box reaches the
 goal undamaged. A steady push moves it cleanly, and a strike at speed dents it.
 [The package README](lerobot/openbeam_push/README.md) gives the observations,
 actions and options.
+
+![The push task: the scripted expert goes round the soft box and pushes it onto the green goal, twice](docs/images/lerobot_push.gif)
+
+*The scripted expert on two seeds. It goes round the box and pushes it onto
+the green goal, stopping within 5 cm with no beam yielded. Below, the side
+camera of `render()`, and the 96 × 96 top-camera image that LeRobot gives a
+policy as `observation.image`.*
+
+![The side camera and the 96 x 96 observation image](docs/images/lerobot_views.png)
+
+<details>
+<summary><b>LeRobot environment tests: 13 passed</b></summary>
+
+```text
+$ python -m pytest lerobot/tests -v
+lerobot/tests/test_openbeam_push.py::test_gymnasium_env_checker[state] PASSED
+lerobot/tests/test_openbeam_push.py::test_gymnasium_env_checker[pixels_state] PASSED
+lerobot/tests/test_openbeam_push.py::test_box_rests_and_reset_is_deterministic PASSED
+lerobot/tests/test_openbeam_push.py::test_expert_pushes_box_onto_goal_undamaged[0] PASSED
+lerobot/tests/test_openbeam_push.py::test_expert_pushes_box_onto_goal_undamaged[1] PASSED
+lerobot/tests/test_openbeam_push.py::test_expert_pushes_box_onto_goal_undamaged[2] PASSED
+lerobot/tests/test_openbeam_push.py::test_expert_pushes_box_onto_goal_undamaged[3] PASSED
+lerobot/tests/test_openbeam_push.py::test_expert_pushes_box_onto_goal_undamaged[4] PASSED
+lerobot/tests/test_openbeam_push.py::test_expert_pushes_box_onto_goal_undamaged[5] PASSED
+lerobot/tests/test_openbeam_push.py::test_ramming_dents_the_box PASSED
+lerobot/tests/test_openbeam_push.py::test_contact_couples_both_ways PASSED
+lerobot/tests/test_openbeam_push.py::test_lerobot_hub_env_config_loads_and_steps PASSED
+lerobot/tests/test_openbeam_push.py::test_lerobot_runs_the_expert_to_success PASSED
+13 passed
+```
+
+</details>
 
 ```bash
 python -m venv .venv-lerobot
@@ -311,12 +424,21 @@ Not verified:
 
 ## Licence
 
-GPL-3.0; see [`COPYING`](COPYING). The plugins link OpenBeam's GPL-3.0 law
-sources, which this repository carries in `third_party/openbeam/` with their
-headers intact. MuJoCo and LeRobot are Apache-2.0. Isaac Sim's Kit runtime is
-proprietary. This repository distributes source only, and it does not settle
-whether a binary bundle of the extension and the core library may be
-distributed for Isaac Sim.
+[LICENSE.md](LICENSE.md) gives the details:
+
+- **Code:** GPL-3.0-or-later ([COPYING](COPYING)). The vendored law sources in
+  `third_party/openbeam/` are GPL-3.0 version 3 only, so the built libraries are
+  GPL-3.0. You may use, change and run everything, commercially too. If you
+  distribute it, or a product that includes it, you must share that source
+  under the GPL as well.
+- **Assets:** the JBeam structures and the images in `docs/images/` are
+  CC BY 4.0, so you may reuse them anywhere if you credit them.
+- **Name:** the licences grant no rights in the OpenBeam name or logos.
+- **Contributions:** contributors sign the [OpenBeam CLA](CLA.md); see
+  [CONTRIBUTING.md](CONTRIBUTING.md).
+
+MuJoCo and LeRobot are Apache-2.0, and Isaac Sim is under NVIDIA's licence.
+This repository includes none of them.
 
 ### The vendored OpenBeam sources
 

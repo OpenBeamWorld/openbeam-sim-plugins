@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """MuJoCo engine plugin "openbeam.softbody": loading, coupling and state contracts.
 
 Run with the MuJoCo venv after building (README.md):

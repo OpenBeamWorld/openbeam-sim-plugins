@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Tests of the OpenBeam push EnvHub package, through LeRobot's own loader.
 
     python -m pytest lerobot/tests -q

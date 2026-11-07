@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """OpenBeam soft-box push: a LeRobot EnvHub environment on MuJoCo and OpenBeam.
 
 A pusher (a MuJoCo capsule on two position-controlled slide joints) pushes a

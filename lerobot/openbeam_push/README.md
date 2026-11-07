@@ -57,7 +57,7 @@ the `forkserver` method, which Windows does not have.
 goes round the box and pushes it with a 60 N lead, moving slowly near the box.
 It succeeds on all of the first 50 seeds without denting the box.
 
-## License
+## Licence
 
-`env.py` and this package are part of OpenBeam, GPL-3.0-or-later, and so is
-the plugin library they load.
+`env.py` is GPL-3.0-or-later, and so is the plugin library it loads.
+`soft_box.jbeam` is CC BY 4.0. See the repository's LICENSE.md.

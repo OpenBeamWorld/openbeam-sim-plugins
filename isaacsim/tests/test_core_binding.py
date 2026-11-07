@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """The Isaac Sim extension's ctypes binding of openbeam_core, outside Isaac Sim.
 
     python -m pytest isaacsim/tests -q

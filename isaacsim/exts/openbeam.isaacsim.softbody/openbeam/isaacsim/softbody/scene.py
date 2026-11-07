@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """The wrecking-ball demo scene, the same as the MuJoCo one
 (mujoco/models/wrecking_ball.xml): a 300 kg PhysX ball on a
 3 m revolute pendulum, released at 60 degrees, swings into OpenBeam's

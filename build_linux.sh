@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Builds the OpenBeam core and MuJoCo plugin on Linux (GCC or Clang + CMake),
 # installs them to build/install and runs the core's tests. See README.md.
 #

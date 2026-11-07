@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Keeps third_party/openbeam/ in step with OpenBeam's sources.
 
 The soft-body core (openbeam_core/) compiles 22 files of OpenBeam and of its

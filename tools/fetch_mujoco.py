@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Downloads the MuJoCo release the plugin builds against and checks its SHA-256.
 
   python tools/fetch_mujoco.py            # into third_party/mujoco-4.0.0

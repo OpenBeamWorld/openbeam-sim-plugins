@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # openbeam_core: the shared soft-body library (C ABI, openbeam_core.h).
 #
 # OpenBeam's engine and game law sources are compiled as they are, from

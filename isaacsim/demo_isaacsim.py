@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """OpenBeam in Isaac Sim: a PhysX wrecking ball against an OpenBeam JBeam crate.
 
 Run with Isaac Sim's own Python, after building the repository (README.md):

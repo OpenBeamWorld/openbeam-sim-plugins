@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Writes truss_crate.jbeam, the demo structure of the simulator plugins.
 
 A box lattice of nodes joined along every edge and every face diagonal of

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """An OpenBeam soft body in an Isaac Sim stage, coupled to PhysX rigid bodies.
 
 PhysX simulates the rigid bodies; OpenBeam simulates the JBeam structure. On

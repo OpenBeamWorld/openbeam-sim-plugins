@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Builds the core and the MuJoCo plugin and runs every test that needs no GPU:
 # the core's contract tests, the MuJoCo plugin tests, the Isaac Sim extension's
 # ctypes-binding tests and the LeRobot environment tests. The in-Isaac checks

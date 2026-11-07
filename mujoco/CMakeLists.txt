@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # openbeam_mujoco: the MuJoCo engine plugin "openbeam.softbody", with the
 # OpenBeam core linked in. Load it with mujoco.mj_loadPluginLibrary (Python)
 # or drop it into a MuJoCo release's bin/mujoco_plugin/ for simulate.exe.
