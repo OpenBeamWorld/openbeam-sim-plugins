@@ -70,3 +70,28 @@ def test_reset_restores_digest():
     assert w.digest() != d0
     w.reset()
     assert w.digest() == d0
+
+
+def test_beam_damage_reports_yield_and_tears():
+    """A sphere driven through the crate at 8 m/s yields and tears beams; beam_damage reports both
+    and agrees with the counters, and a reset clears it."""
+    w = core.World(CRATE, (0.0, 0.0, 0.0))
+    w.add_plane((0, 0, 0), (0, 0, 1))
+    cid = w.add_collider(core.SHAPE_SPHERE, (0.4, 0, 0))
+    plastic, damage = w.beam_damage()
+    assert plastic.shape == damage.shape == (w.beam_count,)
+    assert not plastic.any() and not damage.any()
+    center, vel = np.array([-0.6, 0.6, 0.45]), np.array([8.0, 0.0, 0.0])
+    for _ in range(80):
+        w.set_collider_state(cid, center, (1, 0, 0, 0), vel, (0, 0, 0))
+        w.advance(1.0 / 200.0)
+        center = center + vel / 200.0
+    plastic, damage = w.beam_damage()
+    _, _, _, broken = w.beam_state()
+    s = w.stats()
+    assert s["beams_broken"] >= 1 and s["beams_deformed"] >= 10
+    assert np.all(damage[broken] == 1.0)
+    assert int((np.abs(plastic) > 1e-4).sum()) >= s["beams_deformed"] - s["beams_broken"]
+    w.reset()
+    plastic, damage = w.beam_damage()
+    assert not plastic.any() and not damage.any()

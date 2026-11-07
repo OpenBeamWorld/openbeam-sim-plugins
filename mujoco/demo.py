@@ -63,6 +63,8 @@ def load_plugin() -> ctypes.CDLL:
             getattr(lib, name).argtypes = [ctypes.c_void_p]
         lib.ob_world_get_node_velocities.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
         lib.ob_world_get_node_positions.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        lib.ob_world_get_beam_state.argtypes = [ctypes.c_void_p] * 5
+        lib.ob_world_get_beam_damage.argtypes = [ctypes.c_void_p] * 3
         lib.ob_world_total_mass.restype = ctypes.c_double
         lib.ob_world_total_mass.argtypes = [ctypes.c_void_p]
         _LOADED[path] = lib

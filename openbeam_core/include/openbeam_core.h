@@ -44,7 +44,8 @@
 extern "C" {
 #endif
 
-#define OB_CORE_API_VERSION 1
+/* 2: adds ob_world_get_beam_damage; every version-1 function is unchanged. */
+#define OB_CORE_API_VERSION 2
 
 typedef struct ob_world ob_world;
 
@@ -129,6 +130,13 @@ OB_API void ob_world_get_beam_nodes(const ob_world* world, int* pairs);
  * force. */
 OB_API void ob_world_get_beam_state(const ob_world* world, float* stress, float* rest_length,
     float* strength, unsigned char* broken);
+/* Each beam's permanent damage, for drawing and analysis; either output may
+ * be null. plastic_strain: the permanent axial strain, positive when the beam
+ * has been stretched for good and negative when crushed (calibrated beams:
+ * the material's plastic strain; other beams: the change of rest length over
+ * the rest length at creation). damage: 0 intact to 1 torn (calibrated beams:
+ * the material's damage variable; other beams: 1 once broken). */
+OB_API void ob_world_get_beam_damage(const ob_world* world, float* plastic_strain, float* damage);
 OB_API void ob_world_get_stats(const ob_world* world, ob_stats* stats);
 /* FNV-1a over the node state bytes and beam rest lengths and flags: equal
  * digests mean the same simulation state, bit for bit. */

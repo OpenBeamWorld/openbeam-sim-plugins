@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 
 SHAPE_SPHERE, SHAPE_BOX, SHAPE_CAPSULE = 0, 1, 2
+API_VERSION = 2  # OB_CORE_API_VERSION this binding is written against
 
 _EXT_ROOT = Path(__file__).resolve().parents[3]
 _LIB_NAME = {"win32": "openbeam_core.dll", "darwin": "libopenbeam_core.dylib"}.get(sys.platform,
@@ -75,6 +76,7 @@ def _load() -> ctypes.CDLL:
         "ob_world_get_node_velocities": (None, [P, P]),
         "ob_world_get_beam_nodes": (None, [P, P]),
         "ob_world_get_beam_state": (None, [P, P, P, P, P]),
+        "ob_world_get_beam_damage": (None, [P, P, P]),
         "ob_world_get_stats": (None, [P, ctypes.POINTER(Stats)]),
         "ob_world_state_digest": (ctypes.c_ulonglong, [P]),
     }
@@ -82,8 +84,9 @@ def _load() -> ctypes.CDLL:
         fn = getattr(lib, name)
         fn.restype = res
         fn.argtypes = args
-    if lib.ob_core_api_version() != 1:
-        raise RuntimeError("openbeam_core API version mismatch")
+    if lib.ob_core_api_version() != API_VERSION:
+        raise RuntimeError(f"openbeam_core API version {lib.ob_core_api_version()}, expected {API_VERSION}: "
+                           "rebuild the library from this repository")
     _lib = lib
     return lib
 
@@ -178,6 +181,13 @@ class World:
         self._lib.ob_world_get_beam_state(self._h, stress.ctypes.data, rest.ctypes.data, strength.ctypes.data,
                                           broken.ctypes.data)
         return stress, rest, strength, broken.astype(bool)
+
+    def beam_damage(self):
+        """(permanent plastic strain, damage 0 intact to 1 torn) per beam."""
+        plastic = np.zeros(self.beam_count, dtype=np.float32)
+        damage = np.zeros(self.beam_count, dtype=np.float32)
+        self._lib.ob_world_get_beam_damage(self._h, plastic.ctypes.data, damage.ctypes.data)
+        return plastic, damage
 
     def stats(self) -> dict:
         s = Stats()

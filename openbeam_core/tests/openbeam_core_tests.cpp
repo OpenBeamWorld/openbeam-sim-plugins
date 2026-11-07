@@ -249,6 +249,15 @@ void TestCalibratedYieldAndFracture()
     CHECK(s.beams_deformed == 1);
     CHECK(s.beams_broken == 0);
     CHECK(stretch > 0.05 && stretch < 0.4);
+    // The yield is permanent and reported: stretched for good, not torn.
+    float plastic = 0.0f, damage = -1.0f;
+    ob_world_get_beam_damage(w, &plastic, &damage);
+    std::printf("calibrated 245 N: plastic strain %.4f, damage %.3f\n", plastic, damage);
+    CHECK(plastic > 0.02f && plastic < 0.4f);
+    CHECK(damage >= 0.0f && damage < 1.0f);
+    ob_world_reset(w);
+    ob_world_get_beam_damage(w, &plastic, &damage);
+    CHECK(plastic == 0.0f && damage == 0.0f);
     ob_world_destroy(w);
 
     w = Make(
@@ -269,6 +278,9 @@ void TestCalibratedYieldAndFracture()
     }
     std::printf("calibrated 1471 N: broke after %.2f s\n", broke_at);
     CHECK(broke_at > 0.0);
+    float torn_damage = 0.0f;
+    ob_world_get_beam_damage(w, nullptr, &torn_damage);
+    CHECK(torn_damage == 1.0f);
     ob_world_destroy(w);
 }
 

@@ -19,7 +19,8 @@
 //
 // Optional sensor (<sensor><plugin instance=.../></sensor>, 6 values):
 // beams broken, beams deformed, centroid x y z, OpenBeam steps run.
-// The visualize callback draws every unbroken beam, coloured by |stress|.
+// The visualize callback draws every beam: green at rest, yellow under load,
+// orange to red where it has yielded for good, and torn beams as red stubs.
 
 #include "openbeam_core.h"
 
@@ -43,7 +44,7 @@
 namespace {
 
 const char* const kAttributes[] = {"jbeam", "pos", "quat", "colliders", "grounds", "stress_scale",
-    "beam_width"};
+    "strain_scale", "beam_width"};
 constexpr int kSensorDim = 6;
 
 struct ColliderBinding
@@ -60,11 +61,12 @@ struct Instance
     double last_time = -1.0;
     bool advanced = false;
     bool planes_added = false; // planes are static: posed once, kept across resets
-    double stress_scale = 20000.0;
+    double stress_scale = 20000.0; // N of live load drawn full yellow
+    double strain_scale = 0.05;    // plastic strain drawn full red
     double beam_width = 0.012;
     std::vector<double> scratch_positions;
     std::vector<int> pairs;
-    std::vector<float> stress;
+    std::vector<float> stress, rest, plastic, damage;
     std::vector<unsigned char> broken;
 
     ~Instance() { ob_world_destroy(world); }
@@ -193,6 +195,8 @@ int Init(const mjModel* m, mjData* d, int instance)
     double value = 0.0;
     if (ParseNumbers(Config(m, instance, "stress_scale"), 1, &value) && value > 0.0)
         inst->stress_scale = value;
+    if (ParseNumbers(Config(m, instance, "strain_scale"), 1, &value) && value > 0.0)
+        inst->strain_scale = value;
     if (ParseNumbers(Config(m, instance, "beam_width"), 1, &value) && value > 0.0)
         inst->beam_width = value;
     const double gravity[3] = {m->opt.gravity[0], m->opt.gravity[1], m->opt.gravity[2]};
@@ -310,28 +314,55 @@ void Visualize(const mjModel*, mjData* d, const mjvOption*, mjvScene* scn, int i
     if (!inst)
         return;
     const int nn = ob_world_node_count(inst->world), nb = ob_world_beam_count(inst->world);
+    const std::size_t n = static_cast<std::size_t>(nb);
     inst->scratch_positions.resize(3 * static_cast<std::size_t>(nn));
-    inst->pairs.resize(2 * static_cast<std::size_t>(nb));
-    inst->stress.resize(static_cast<std::size_t>(nb));
-    inst->broken.resize(static_cast<std::size_t>(nb));
+    inst->pairs.resize(2 * n);
+    inst->stress.resize(n);
+    inst->rest.resize(n);
+    inst->plastic.resize(n);
+    inst->damage.resize(n);
+    inst->broken.resize(n);
     ob_world_get_node_positions(inst->world, inst->scratch_positions.data());
     ob_world_get_beam_nodes(inst->world, inst->pairs.data());
-    ob_world_get_beam_state(inst->world, inst->stress.data(), nullptr, nullptr, inst->broken.data());
-    for (int b = 0; b < nb && scn->ngeom < scn->maxgeom; ++b)
-    {
-        if (inst->broken[static_cast<std::size_t>(b)])
-            continue;
-        // Green at rest, through yellow, to red at stress_scale.
-        const float t = static_cast<float>(std::min(1.0,
-            std::abs(inst->stress[static_cast<std::size_t>(b)]) / inst->stress_scale));
-        const float rgba[4] = {std::min(1.0f, 2.0f * t), std::min(1.0f, 2.0f * (1.0f - t)), 0.1f, 1.0f};
+    ob_world_get_beam_state(inst->world, inst->stress.data(), inst->rest.data(), nullptr, inst->broken.data());
+    ob_world_get_beam_damage(inst->world, inst->plastic.data(), inst->damage.data());
+    auto connector = [&](const double* from, const double* to, const float rgba[4], double width) {
+        if (scn->ngeom >= scn->maxgeom)
+            return;
         mjvGeom* g = scn->geoms + scn->ngeom;
         mjv_initGeom(g, mjGEOM_CAPSULE, nullptr, nullptr, nullptr, rgba);
         g->category = mjCAT_DECOR;
-        const double* a = inst->scratch_positions.data() + 3 * inst->pairs[2 * static_cast<std::size_t>(b)];
-        const double* c = inst->scratch_positions.data() + 3 * inst->pairs[2 * static_cast<std::size_t>(b) + 1];
-        mjv_connector(g, mjGEOM_CAPSULE, inst->beam_width, a, c);
+        mjv_connector(g, mjGEOM_CAPSULE, width, from, to);
         ++scn->ngeom;
+    };
+    for (std::size_t b = 0; b < n; ++b)
+    {
+        const double* a = inst->scratch_positions.data() + 3 * inst->pairs[2 * b];
+        const double* c = inst->scratch_positions.data() + 3 * inst->pairs[2 * b + 1];
+        if (inst->broken[b])
+        {
+            // Torn: a red stub snapped back towards each end node.
+            static const float kTorn[4] = {1.0f, 0.05f, 0.05f, 1.0f};
+            const double span = std::sqrt((c[0] - a[0]) * (c[0] - a[0]) + (c[1] - a[1]) * (c[1] - a[1]) +
+                (c[2] - a[2]) * (c[2] - a[2]));
+            if (span <= 0.0)
+                continue;
+            const double f = std::min(0.25, 0.3 * inst->rest[b] / span);
+            const double a_end[3] = {a[0] + f * (c[0] - a[0]), a[1] + f * (c[1] - a[1]), a[2] + f * (c[2] - a[2])};
+            const double c_end[3] = {c[0] + f * (a[0] - c[0]), c[1] + f * (a[1] - c[1]), c[2] + f * (a[2] - c[2])};
+            connector(a, a_end, kTorn, 1.5 * inst->beam_width);
+            connector(c, c_end, kTorn, 1.5 * inst->beam_width);
+            continue;
+        }
+        // Severity 0 (green) to 0.5 (yellow) for live load; 0.6 (orange) to
+        // 0.95 (red) once the beam has yielded or taken damage.
+        float s = 0.5f * static_cast<float>(std::min(1.0, std::abs(inst->stress[b]) / inst->stress_scale));
+        const float permanent = std::max(static_cast<float>(std::min(1.0,
+            std::abs(inst->plastic[b]) / inst->strain_scale)), inst->damage[b]);
+        if (std::abs(inst->plastic[b]) > 1e-4f || inst->damage[b] > 0.0f)
+            s = 0.6f + 0.35f * permanent;
+        const float rgba[4] = {std::min(1.0f, 2.0f * s), std::min(1.0f, 2.0f * (1.0f - s)), 0.1f, 1.0f};
+        connector(a, c, rgba, inst->beam_width);
     }
 }
 

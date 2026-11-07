@@ -19,7 +19,7 @@ class OpenBeamSoftBodyExtension(omni.ext.IExt):
         try:
             path = core.library_path()
             core._load()
-            carb.log_warn(f"[{_EXT}] started: openbeam_core API 1 from {path}")
+            carb.log_warn(f"[{_EXT}] started: openbeam_core API {core.API_VERSION} from {path}")
         except Exception as e:  # the extension stays loaded; SoftBody raises on use
             carb.log_error(f"[{_EXT}] openbeam_core unavailable: {e}")
         # Window > OpenBeam > Wrecking Ball Demo, where the app has menus.

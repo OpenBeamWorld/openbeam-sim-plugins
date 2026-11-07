@@ -108,7 +108,7 @@
     ],
     "beams": [
         ["id1:", "id2:"],
-        {"beamSpring": 400000, "beamDamp": 40, "beamDeform": 2000, "beamStrength": 6000},
+        {"beamSpring": 400000, "beamDamp": 40, "beamDeform": 600, "beamStrength": 6000},
         ["c000", "c001"],
         ["c000", "c010"],
         ["c000", "c011"],

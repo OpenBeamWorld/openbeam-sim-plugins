@@ -861,6 +861,31 @@ void ob_world_get_beam_state(const ob_world* world, float* stress, float* rest_l
     }
 }
 
+void ob_world_get_beam_damage(const ob_world* world, float* plastic_strain, float* damage)
+{
+    if (!world)
+        return;
+    for (std::size_t i = 0; i < world->beams.size(); ++i)
+    {
+        const Beam& b = world->beams[i];
+        float strain = 0.0f;
+        float d = b.broken ? 1.0f : 0.0f;
+        if (b.calibrated)
+        {
+            strain = static_cast<float>(b.runtime.state.plastic_strain);
+            d = std::max(d, static_cast<float>(b.runtime.state.damage));
+        }
+        else if (b.refL > 0.0f)
+        {
+            strain = (b.L - b.refL) / b.refL;
+        }
+        if (plastic_strain)
+            plastic_strain[i] = strain;
+        if (damage)
+            damage[i] = d;
+    }
+}
+
 void ob_world_get_stats(const ob_world* world, ob_stats* stats)
 {
     if (!stats)

@@ -132,9 +132,38 @@ def test_copy_and_reset():
 
 def test_wrecking_ball_demo():
     summary = demo.run_headless(3.0, None)
-    assert summary["first_contact_s"] == pytest.approx(0.94, abs=0.05)
-    assert summary["ball_speed_peak_mps"] > 5.0
+    assert summary["first_contact_s"] == pytest.approx(1.03, abs=0.05)
+    assert summary["ball_speed_peak_mps"] > 7.0
     assert summary["ball_speed_after_peak_min_mps"] < 1.0   # stopped by the crate
-    assert summary["beams_deformed"] >= 10
-    assert summary["beams_broken"] >= 1
+    assert summary["beams_deformed"] >= 150                 # the struck face caves in
+    assert summary["beams_broken"] >= 20                    # and tears
     assert summary["crate_centroid_shift_m"][0] > 0.2       # pushed away from the ball
+
+
+def test_drawing_shows_yield_and_tears():
+    """After the wrecking ball, the plugin draws every intact beam once and each torn beam as two
+    stubs, and the beams that yielded are drawn orange to red rather than green or yellow."""
+    lib, model, data = demo.build()
+    while data.time < 3.0:
+        mujoco.mj_step(model, data)
+    world = lib.openbeam_mujoco_world(data._address, 0)
+    n = lib.ob_world_beam_count(world)
+    broken = np.zeros(n, np.uint8)
+    lib.ob_world_get_beam_state(world, None, None, None, broken.ctypes.data)
+    plastic, damage = np.zeros(n, np.float32), np.zeros(n, np.float32)
+    lib.ob_world_get_beam_damage(world, plastic.ctypes.data, damage.ctypes.data)
+    torn = int(broken.sum())
+    yielded = int((((np.abs(plastic) > 1e-4) | (damage > 0)) & (broken == 0)).sum())
+    assert torn >= 20 and yielded >= 100
+    assert np.all(damage[broken == 1] == 1.0)
+
+    scene = mujoco.MjvScene(model, maxgeom=4 * n)
+    mujoco.mjv_updateScene(model, data, mujoco.MjvOption(), None, mujoco.MjvCamera(),
+                           mujoco.mjtCatBit.mjCAT_ALL, scene)
+    beams = [g for g in scene.geoms[:scene.ngeom]
+             if g.category == mujoco.mjtCatBit.mjCAT_DECOR and g.type == mujoco.mjtGeom.mjGEOM_CAPSULE]
+    assert len(beams) == (n - torn) + 2 * torn
+    green = sum(1 for g in beams if g.rgba[1] > 0.99 and g.rgba[0] < 0.99)   # unloaded, unharmed
+    red_or_orange = sum(1 for g in beams if g.rgba[0] > 0.99 and g.rgba[1] < 0.85)
+    assert red_or_orange >= yielded + 2 * torn
+    assert green > 0

@@ -1,6 +1,7 @@
 <!--
-  OpenBeam in MuJoCo: a 300 kg wrecking ball (MuJoCo rigid body on a hinge)
-  swings into a JBeam truss crate (OpenBeam soft body, plugin "openbeam.softbody").
+  OpenBeam in MuJoCo: a 300 kg wrecking ball (MuJoCo rigid body on a hinge),
+  released from horizontal, swings into a JBeam truss crate (OpenBeam soft body,
+  plugin "openbeam.softbody") at 7.7 m/s and caves in its face.
 
   The jbeam path is relative: run from assets/, or set
   OPENBEAM_ASSET_DIR to that directory. demo.py does the latter.
@@ -52,6 +53,6 @@
   </sensor>
 
   <keyframe>
-    <key name="release" qpos="1.0472"/>
+    <key name="release" qpos="1.5708"/>
   </keyframe>
 </mujoco>

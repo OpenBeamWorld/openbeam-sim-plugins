@@ -25,8 +25,11 @@ from pathlib import Path
 NX, NY, NZ = 5, 5, 4      # nodes per axis
 SPACING = 0.3             # m
 NODE_WEIGHT = 2.0         # kg, 200 kg in all
-# Yield and break forces chosen so a 300 kg ball at 5.4 m/s dents and tears it.
-BEAM = {"beamSpring": 400000, "beamDamp": 40, "beamDeform": 2000, "beamStrength": 6000}
+# A yield force low enough that a 300 kg ball at 7.7 m/s caves in the struck
+# face (about 300 beams yield, about 50 tear) and high enough that the crate
+# does not yield under its own weight. Calibrated beams tear by accumulated
+# damage, so beamStrength does not set when they break.
+BEAM = {"beamSpring": 400000, "beamDamp": 40, "beamDeform": 600, "beamStrength": 6000}
 
 
 def node_id(i: int, j: int, k: int) -> str:

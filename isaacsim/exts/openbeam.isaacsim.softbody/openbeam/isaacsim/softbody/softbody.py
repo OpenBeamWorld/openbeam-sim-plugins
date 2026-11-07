@@ -9,9 +9,10 @@ every physics step, before PhysX steps (SimulationEvent.PHYSICS_PRE_STEP):
      plane and those colliders;
   3. the force and torque the soft body put on each collider over that
      interval are applied to its body for the step PhysX is about to take.
-The structure is drawn as a BasisCurves prim, one linear curve per beam,
-coloured from green (no load) to red (stress_scale newtons); a broken beam
-collapses to a point.
+The structure is drawn as a BasisCurves prim, two linear half-curves per
+beam: green at rest, yellow under load (stress_scale newtons), orange to red
+where the beam has yielded for good (strain_scale of plastic strain), and a
+torn beam as two red stubs snapped back towards its nodes.
 
 Colliders are rigid-body prims that are, or have as a direct child, a
 UsdGeom Sphere, Cube or Capsule (axis Z) centred on the body's origin.
@@ -72,7 +73,8 @@ class SoftBody:
 
     def __init__(self, jbeam_path: str | os.PathLike, *, prim_path: str = "/World/OpenBeam",
                  position=(0.0, 0.0, 0.0), orientation=(1.0, 0.0, 0.0, 0.0), colliders=(),
-                 ground_height: float | None = 0.0, stress_scale: float = 2000.0, beam_width: float = 0.012,
+                 ground_height: float | None = 0.0, stress_scale: float = 2000.0, strain_scale: float = 0.05,
+                 beam_width: float = 0.012,
                  stage=None):
         from isaacsim.core.simulation_manager import SimulationEvent, SimulationManager
 
@@ -91,6 +93,7 @@ class SoftBody:
             shape, size, _ = _collider_shape(prim)
             self._collider_ids.append(self.world.add_collider(shape, size))
         self.stress_scale = float(stress_scale)
+        self.strain_scale = float(strain_scale)
         self.prim_path = prim_path
         self._make_curves(beam_width)
         self._rb_view = None
@@ -184,7 +187,7 @@ class SoftBody:
         curves = UsdGeom.BasisCurves.Define(self.stage, Sdf.Path(self.prim_path))
         curves.CreateTypeAttr(UsdGeom.Tokens.linear)
         curves.CreateWrapAttr(UsdGeom.Tokens.nonperiodic)
-        curves.CreateCurveVertexCountsAttr(Vt.IntArray([2] * self.world.beam_count))
+        curves.CreateCurveVertexCountsAttr(Vt.IntArray([2] * (2 * self.world.beam_count)))  # two halves per beam
         curves.CreateWidthsAttr(Vt.FloatArray([width]))
         curves.SetWidthsInterpolation(UsdGeom.Tokens.constant)
         self._color = curves.CreateDisplayColorPrimvar(UsdGeom.Tokens.uniform)
@@ -193,13 +196,26 @@ class SoftBody:
 
     def draw(self) -> None:
         pos = self.world.positions()
-        stress, _, _, broken = self.world.beam_state()
+        stress, rest, _, broken = self.world.beam_state()
+        plastic, damage = self.world.beam_damage()
         ends = pos[self.world.beam_nodes]                    # (beams, 2, 3)
-        ends[broken, 1] = ends[broken, 0]                    # a broken beam shows as a point
-        t = np.clip(np.abs(stress) / self.stress_scale, 0.0, 1.0)
-        color = np.stack([np.minimum(1.0, 2.0 * t), np.minimum(1.0, 2.0 * (1.0 - t)), np.full_like(t, 0.1)], 1)
-        self._points.Set(Vt.Vec3fArray.FromNumpy(ends.reshape(-1, 3).astype(np.float32)))
-        self._color.Set(Vt.Vec3fArray.FromNumpy(color.astype(np.float32)))
+        a, c = ends[:, 0], ends[:, 1]
+        # Severity 0 (green) to 0.5 (yellow) for live load; 0.6 (orange) to
+        # 0.95 (red) once the beam has yielded or taken damage.
+        s = 0.5 * np.clip(np.abs(stress) / self.stress_scale, 0.0, 1.0)
+        permanent = np.maximum(np.clip(np.abs(plastic) / self.strain_scale, 0.0, 1.0), damage)
+        s = np.where((np.abs(plastic) > 1e-4) | (damage > 0.0), 0.6 + 0.35 * permanent, s)
+        color = np.stack([np.minimum(1.0, 2.0 * s), np.minimum(1.0, 2.0 * (1.0 - s)), np.full_like(s, 0.1)], 1)
+        color[broken] = (1.0, 0.05, 0.05)
+        # An intact beam's halves meet in the middle; a torn beam's are stubs at each node.
+        span = np.linalg.norm(c - a, axis=1)
+        f = np.minimum(0.25, 0.3 * rest / np.maximum(span, 1e-9))[:, None]
+        mid = 0.5 * (a + c)
+        first_end = np.where(broken[:, None], a + f * (c - a), mid)
+        second_start = np.where(broken[:, None], c + f * (a - c), mid)
+        points = np.stack([a, first_end, second_start, c], axis=1)
+        self._points.Set(Vt.Vec3fArray.FromNumpy(points.reshape(-1, 3).astype(np.float32)))
+        self._color.Set(Vt.Vec3fArray.FromNumpy(np.repeat(color, 2, axis=0).astype(np.float32)))
         extent = UsdGeom.Curves.ComputeExtent(self._points.Get(), Vt.FloatArray([0.02]))
         if extent:
             self._curves.GetExtentAttr().Set(extent)

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The wrecking-ball demo scene, the same as the MuJoCo one
 (mujoco/models/wrecking_ball.xml): a 300 kg PhysX ball on a
-3 m revolute pendulum, released at 60 degrees, swings into OpenBeam's
+3 m revolute pendulum, released from horizontal, swings into OpenBeam's
 JBeam truss crate."""
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ DEFAULT_CRATE = Path(__file__).resolve().parents[6] / "assets" / "truss_crate.jb
 
 PIVOT = Gf.Vec3f(0.0, 0.0, 3.6)
 ARM = 3.0
-RELEASE = math.radians(60.0)
+RELEASE = math.radians(90.0)
 CRATE_POSITION = (0.45, -0.6, 0.02)
 
 
