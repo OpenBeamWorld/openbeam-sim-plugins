@@ -1,0 +1,9 @@
+# Beam materials for cat6_cable.jbeam (make_cable.py): first count area_m2 E_pa yield_pa
+#   hardening_pa damage_onset_plastic_strain damage_capacity_j_per_m3
+# yield radius 0.15 m, damage strain 0.3, break strain 0.45, lattice radius 0.00182449 m
+# rated min bend radius 0.025 m (a shape limit for hosts to check)
+# longitudinal fibres: the conductors
+0 200 7.06858e-06 2.8411e+07 345570 1.42055e+06 0.3 131741
+# the diagonal and ring beams (the jacket) and any plug stay elastic
+# twist elements: GJ 0.001429 N m^2 for the cable, 2.17e-05 from the lattice's diagonals
+twist 0 4 51 0.00140686 0.05

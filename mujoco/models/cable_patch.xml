@@ -1,0 +1,108 @@
+<!--
+  SPDX-License-Identifier: GPL-3.0-or-later
+  Data-centre patching in MuJoCo with an OpenBeam Cat6 cable.
+
+  A 1 m Cat6 cable (assets/cat6_cable.jbeam and .materials, from make_cable.py
+  with an RJ45 plug) runs from a wall outlet, where its first two
+  cross-sections are held, to its plug. OpenBeam simulates the cable and the
+  plug: copper conductors that yield and take a set, an elastic jacket, the plug
+  at its real 8 g, and their contact with the desk, the rack D-ring and the
+  patch panel. MuJoCo provides the scene and the gripper, a mocap body that
+  grips the plug through the OpenBeam collider "grip" (cable_demo.py calls
+  openbeam_mujoco_attach). No MuJoCo body is tied to the cable, so MuJoCo steps
+  at 2 ms while OpenBeam substeps at 33 us.
+
+  The jbeam and materials paths are relative: run from assets/, or set
+  OPENBEAM_ASSET_DIR (cable_demo.py does).
+-->
+<mujoco model="openbeam_cable_patch">
+  <option timestep="0.002" integrator="implicitfast"/>
+
+  <extension>
+    <plugin plugin="openbeam.softbody">
+      <instance name="cable">
+        <config key="jbeam" value="cat6_cable.jbeam"/>
+        <config key="materials" value="cat6_cable.materials"/>
+        <config key="pos" value="-0.45 0.25 0.0"/>
+        <config key="step" value="0.000033"/>
+        <config key="node_radius" value="0.00118"/>
+        <config key="node_damping" value="6"/>
+        <config key="release" value="0.05"/>
+        <config key="friction" value="0.5 0.4"/>
+        <config key="colliders" value="outlet grip ring_top ring_bottom ring_left ring_right
+                                       panel_upper panel_lower panel_left panel_right"/>
+        <config key="attach" value="s0_*:outlet s1_*:outlet"/>
+        <config key="stress_scale" value="30"/>
+        <config key="strain_scale" value="0.02"/>
+        <config key="beam_width" value="0.0012"/>
+      </instance>
+    </plugin>
+  </extension>
+
+  <visual>
+    <global offwidth="1280" offheight="720"/>
+    <quality shadowsize="4096"/>
+    <headlight ambient=".35 .35 .35" diffuse=".5 .5 .5"/>
+  </visual>
+  <statistic center="0.05 0 0.08" extent="0.8"/>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1=".72 .78 .86" rgb2=".2 .24 .3" width="256" height="256"/>
+    <texture name="desk" type="2d" builtin="checker" rgb1=".62 .63 .66" rgb2=".56 .57 .6" width="512" height="512"/>
+    <material name="desk" texture="desk" texrepeat="12 12" reflectance=".08"/>
+    <material name="metal" rgba=".25 .27 .3 1" reflectance=".2"/>
+    <material name="panel" rgba=".12 .13 .15 1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0.2 -0.6 1.4" dir="-0.1 0.4 -1" directional="true" castshadow="true"/>
+    <geom name="desk" type="plane" size="1.5 1.5 0.05" material="desk"/>
+
+    <!-- The wall outlet the cable comes from. -->
+    <geom name="outlet" type="box" pos="-0.46 0.25 0.02" size="0.03 0.03 0.02" material="metal"/>
+
+    <!-- A rack D-ring (cable manager): an open square, axis along y. -->
+    <body name="ring" pos="0.25 0.0 0.12">
+      <geom name="ring_top" type="box" pos="0 0 0.035" size="0.04 0.012 0.005" material="metal"/>
+      <geom name="ring_bottom" type="box" pos="0 0 -0.035" size="0.04 0.012 0.005" material="metal"/>
+      <geom name="ring_left" type="box" pos="-0.035 0 0" size="0.005 0.012 0.04" material="metal"/>
+      <geom name="ring_right" type="box" pos="0.035 0 0" size="0.005 0.012 0.04" material="metal"/>
+      <geom name="ring_post" type="box" pos="0 0 -0.08" size="0.006 0.006 0.04" material="metal"
+            contype="0" conaffinity="0"/>
+    </body>
+
+    <!-- A 1U patch panel facing +y on two legs, with an open RJ45 port at (0.30, -0.25, 0.12)
+         and a row of occupied ports either side. -->
+    <body name="panel" pos="0.30 -0.262 0.12">
+      <geom name="panel_upper" type="box" pos="0 0 0.0155" size="0.13 0.012 0.0065" material="panel"/>
+      <geom name="panel_lower" type="box" pos="0 0 -0.0155" size="0.13 0.012 0.0065" material="panel"/>
+      <geom name="panel_left" type="box" pos="-0.0715 0 0" size="0.0585 0.012 0.009" material="panel"/>
+      <geom name="panel_right" type="box" pos="0.0715 0 0" size="0.0585 0.012 0.009" material="panel"/>
+      <geom type="box" pos="-0.12 0 -0.071" size="0.006 0.01 0.049" material="metal" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0.12 0 -0.071" size="0.006 0.01 0.049" material="metal" contype="0" conaffinity="0"/>
+      <geom type="box" pos="-0.035 0.0125 0" size="0.0085 0.001 0.0075" rgba=".18 .45 .85 1" contype="0" conaffinity="0"/>
+      <geom type="box" pos="-0.07 0.0125 0" size="0.0085 0.001 0.0075" rgba=".85 .55 .15 1" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0.035 0.0125 0" size="0.0085 0.001 0.0075" rgba=".18 .45 .85 1" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0.07 0.0125 0" size="0.0085 0.001 0.0075" rgba=".2 .7 .35 1" contype="0" conaffinity="0"/>
+      <site name="port" pos="0 0.004 0" size="0.003" rgba=".2 .9 .3 1"/>
+    </body>
+
+    <!-- The gripper: a mocap body; its fingers are drawn only, and it holds the plug through "grip",
+         a 1 mm OpenBeam collider at the plug's centre (no plug node is inside it). -->
+    <body name="gripper" mocap="true" pos="0.565 0.25 0.08">
+      <geom name="palm" type="box" pos="0 0 0.024" size="0.02 0.03 0.008" material="metal" contype="0" conaffinity="0"/>
+      <geom name="finger_a" type="box" pos="0 0.0095 0.004" size="0.01 0.0025 0.014" material="metal"
+            contype="0" conaffinity="0"/>
+      <geom name="finger_b" type="box" pos="0 -0.0095 0.004" size="0.01 0.0025 0.014" material="metal"
+            contype="0" conaffinity="0"/>
+      <geom name="grip" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0" contype="0" conaffinity="0"/>
+    </body>
+
+    <camera name="overview" pos="0.7 0.72 0.46" xyaxes="-0.697 0.717 0 -0.265 -0.257 0.929" fovy="50"/>
+    <camera name="port_view" pos="0.42 0.05 0.22" xyaxes="-0.827 0.562 0 -0.192 -0.283 0.940" fovy="40"/>
+  </worldbody>
+
+  <sensor>
+    <plugin name="cable_state" instance="cable"/>
+  </sensor>
+</mujoco>
