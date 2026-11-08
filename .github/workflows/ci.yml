@@ -53,7 +53,7 @@ jobs:
           python -m pip install mujoco==4.0.0 lerobot==0.7.0 pytest pillow
           --extra-index-url https://download.pytorch.org/whl/cpu
       - name: MuJoCo plugin, cable demo and Isaac binding tests, and the cable physics validation
-        run: python -m pytest mujoco/tests isaacsim/tests validation -q
+        run: python -m pytest mujoco/tests isaacsim/tests validation tools/tests -q
       - name: LeRobot environment tests
         env:
           MUJOCO_GL: ${{ runner.os == 'Linux' && 'osmesa' || '' }}
