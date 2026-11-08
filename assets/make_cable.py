@@ -53,7 +53,13 @@ What is physical and what is not:
   - EA is an effective value: copper cables are nearly inextensible, which an
     explicit integrator follows only with a tiny step. The defaults stretch
     about 0.06 % under 1 N. The script prints the largest stable step for what
-    it writes.
+    it writes. One fibre strain sets both the yield radius in bending and the
+    pull at which the conductors yield in tension, EA r / R_yield, so a
+    reduced EA also lowers that pull: about 20 N with the defaults, where a
+    real Cat6's copper yields near its 110 N rated pulling tension. A cable
+    held at both ends must be given slack before it is moved, as one would in
+    practice; to study pulling itself, raise EA (about 51 kN makes the two
+    agree for Cat6) and run at the smaller step it prints.
 
   python make_cable.py --out cat6_cable.jbeam --rj45          # Cat6 with an RJ45 plug
   python make_cable.py --out lc_fibre.jbeam --diameter 0.002 --mass-per-metre 0.0095 \\
@@ -203,7 +209,8 @@ def build(args) -> tuple[str, str, dict]:
         max_step = min(max_step, 2.0 / math.sqrt(4 * (gj_twist / s) / (n * node_mass * r * r)))
     if plug_nodes:
         max_step = min(max_step, 2.0 / math.sqrt(7 * k_plug / plug_mass))
-    info = {"sections": sections, "per_section": n, "nodes": len(nodes) + len(plug_nodes),
+    yield_pull = args.ea * eps_y
+    info = {"sections": sections, "axial_yield_pull_n": yield_pull, "per_section": n, "nodes": len(nodes) + len(plug_nodes),
             "beams": n_long + n_diag + len(beams_ring) + len(plug_beams), "lattice_radius_m": r,
             "node_mass_kg": node_mass, "max_stable_step_s": max_step,
             "contact_radius_m": max(0.0, args.diameter / 2.0 - r), "gj_n_m2": gj, "gj_lattice_n_m2": gj_lattice}
@@ -245,7 +252,8 @@ def main() -> int:
           f"{1000 * info['lattice_radius_m']:.2f} mm, node mass {1000 * info['node_mass_kg']:.3f} g; "
           f"largest stable step {1e6 * info['max_stable_step_s']:.0f} us; "
           f"contact radius {1000 * info['contact_radius_m']:.2f} mm; GJ {info['gj_n_m2']:.3g} N m^2 "
-          f"({info['gj_lattice_n_m2']:.2g} from the lattice)")
+          f"({info['gj_lattice_n_m2']:.2g} from the lattice); the conductors yield under an axial pull of "
+          f"{info['axial_yield_pull_n']:.0f} N")
     return 0
 
 

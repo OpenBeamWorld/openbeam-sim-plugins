@@ -2,23 +2,27 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Data-centre patching in MuJoCo: a gripper plugs an OpenBeam Cat6 cable into a patch panel.
 
-The gripper (a mocap body) takes the cable's RJ45 plug, threads the cable
-through a rack D-ring and pushes the plug into a patch-panel port. OpenBeam
-simulates the cable and the plug: sag, bending and twist, contact with the
-desk, ring and panel, and any permanent set or damage the handling leaves. The
-gripper's path is the only scripted input; where the cable goes, whether the
-plug seats and what the cable keeps are the physics.
+The gripper (a mocap body) takes the cable's RJ45 plug, gives the cable some
+slack, threads it through a rack D-ring and pushes the plug into a patch-panel
+port. OpenBeam simulates the cable and the plug: sag, bending and twist,
+contact with the desk, ring and panel, and any permanent set or damage the
+handling leaves. The gripper's path is the only scripted input, and the
+gripper holds the plug rigidly, so where the plug ends up is the path's doing;
+where the cable goes and what it keeps are the physics.
 
 The run reports, kept apart as a cable's properties are:
   - the tightest bend along the centreline and the time spent below the
     cable's rated minimum bend radius (a performance rating, not a failure);
   - the permanent set the copper took (beams that yielded, peak plastic strain);
   - damage and tears, where the copper's ductility ran out;
-and whether the cable passes through the ring and where the plug ended up.
+whether the cable passes through the ring, and where the plug ended up. Two
+routes differ in when the plug turns to face the port: while it is carried
+(the default) or while it is lifted (--turn-while-lifting).
 
 usage:
   python cable_demo.py                      # headless, JSON summary
   python cable_demo.py --frames out_dir     # also PNG frames from the overview camera
+  python cable_demo.py --turn-while-lifting # the other route
   python cable_demo.py --viewer             # interactive viewer, real time
 """
 
@@ -45,20 +49,26 @@ RATED_MIN_BEND_RADIUS = 0.025      # m: Cat6, four diameters (TIA-568), a shape 
 RING = (0.25, 0.0, 0.12)
 
 
-def waypoints(ring_x: float = RING[0], port_x: float = 0.30, port_z: float = 0.12, ring_z: float = RING[2]):
-    """Gripper waypoints (time s, position m, yaw degrees, gripping): take the plug, go through the ring
-    along -y and on until the cable behind runs straight through, then across to the port and in."""
+def waypoints(ring_x: float = RING[0], port_x: float = 0.30, port_z: float = 0.12, ring_z: float = RING[2],
+              turn_while_lifting: bool = False):
+    """Gripper waypoints (time s, position m, yaw degrees, gripping): take the plug, slide it back and aside
+    to give the cable slack (it lies straight from the outlet, so lifting it as it lies would stretch it),
+    lift, go through the ring along -y and on until the cable behind runs straight through, then across to
+    the port and in. The plug turns to face the port while it is carried, or, with turn_while_lifting,
+    while it is lifted next to the cable lying behind it."""
     x0, y0, z0 = PLUG_START
+    lift_yaw = -90.0 if turn_while_lifting else 0.0
     return [
         (0.0, (x0, y0, 0.08), 0.0, False),
         (0.6, (x0, y0, z0), 0.0, False),
         (0.7, (x0, y0, z0), 0.0, True),
-        (1.4, (x0, y0, 0.14), 0.0, True),
-        (2.6, (ring_x, 0.12, ring_z), -90.0, True),
-        (3.6, (ring_x, -0.12, ring_z), -90.0, True),
-        (4.4, (port_x, -0.2, port_z), -90.0, True),
-        (5.4, (port_x, -0.25, port_z), -90.0, True),     # the plug's front 15 mm past the panel face
-        (6.0, (port_x, -0.25, port_z), -90.0, True),
+        (1.5, (x0 - 0.10, y0 - 0.06, z0 + 0.003), 0.0, True),
+        (2.2, (x0 - 0.10, y0 - 0.06, 0.14), lift_yaw, True),
+        (3.4, (ring_x, 0.12, ring_z), -90.0, True),
+        (4.4, (ring_x, -0.12, ring_z), -90.0, True),
+        (5.2, (port_x, -0.2, port_z), -90.0, True),
+        (6.2, (port_x, -0.25, port_z), -90.0, True),     # the plug's front 15 mm past the panel face
+        (6.8, (port_x, -0.25, port_z), -90.0, True),
     ]
 
 
@@ -205,11 +215,11 @@ def run(seconds: float = DURATION, frames: Path | None = None, frame_times=None,
     }
 
 
-def run_viewer() -> None:
+def run_viewer(path=WAYPOINTS) -> None:
     import mujoco.viewer
 
     lib, model, data = build()
-    drive = Driver(lib, model, data)
+    drive = Driver(lib, model, data, path)
     with mujoco.viewer.launch_passive(model, data) as viewer:
         while viewer.is_running() and data.time < DURATION + 5:
             start = time.perf_counter()
@@ -225,12 +235,14 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--seconds", type=float, default=DURATION)
     ap.add_argument("--frames", type=Path, help="write overview PNGs at key moments here")
+    ap.add_argument("--turn-while-lifting", action="store_true", help="turn the plug while lifting it")
     ap.add_argument("--viewer", action="store_true")
     args = ap.parse_args()
+    path = waypoints(turn_while_lifting=args.turn_while_lifting)
     if args.viewer:
-        run_viewer()
+        run_viewer(path)
         return 0
-    summary = run(args.seconds, args.frames, [0.7, 2.0, 3.1, 4.4, 6.0] if args.frames else None)
+    summary = run(args.seconds, args.frames, [0.7, 1.5, 2.2, 3.4, 4.4, 6.8] if args.frames else None, path)
     print(json.dumps(summary, indent=1))
     return 0
 

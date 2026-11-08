@@ -202,8 +202,10 @@ OB_API int ob_world_load_materials(ob_world* world, const char* path, char* err,
  * as forces across each section that sum to zero. A lattice of axial beams
  * resists twist only through diagonals lying nearly along its axis, far less
  * than a cable does, and a bent bay can roll over instead of straining its
- * fibres; this supplies the torsion it lacks. Inactive once every beam joining
- * the two sections is torn. stiffness in N m per radian, damping in N m s per
+ * fibres; this supplies the torsion it lacks. It fades out where the pair
+ * bends between 60 and 90 degrees (a kink tighter than about the spacing of the
+ * sections, which the lattice does not resolve), and is inactive once every
+ * beam joining the two sections is torn. stiffness in N m per radian, damping in N m s per
  * radian. Returns the element's index, or -1. Survives ob_world_reset. */
 OB_API int ob_world_add_twist(ob_world* world, const int* section_a, const int* section_b, int count,
     double stiffness, double damping);

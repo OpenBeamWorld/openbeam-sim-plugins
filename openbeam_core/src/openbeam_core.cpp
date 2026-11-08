@@ -567,6 +567,7 @@ struct ob_world
         D3 centre, mean_v;
         std::vector<D3> u;
         double inertia_arm = 0.0; // sum of |u|^2
+        double spread = 0.0;      // the same before projecting across the axis
         double spin = 0.0;
     };
     static void Frame(const std::vector<std::uint32_t>& ids, const std::vector<Node>& ns, SectionFrame& f)
@@ -584,11 +585,12 @@ struct ob_world
     static void Across(const std::vector<std::uint32_t>& ids, const std::vector<Node>& ns, D3 axis, SectionFrame& f)
     {
         f.u.resize(ids.size());
-        f.inertia_arm = 0.0;
+        f.inertia_arm = f.spread = 0.0;
         double spin = 0.0;
         for (std::size_t j = 0; j < ids.size(); ++j)
         {
             D3 d = ToD(ns[ids[j]].x) - f.centre;
+            f.spread += Dot(d, d);
             d = d - axis * Dot(d, axis);
             f.u[j] = d;
             f.inertia_arm += Dot(d, d);
@@ -633,7 +635,18 @@ struct ob_world
             if (!(fa.inertia_arm > 0.0 && fb.inertia_arm > 0.0))
                 continue;
             tw.roll = Roll(fa, fb, axis, tw.rest);
-            const double torque_b = -tw.k * tw.roll - tw.c * (fb.spin - fa.spin);
+            // Roll about the chord between the centres is twist while the bay
+            // bends moderately. A bay bent past 60 degrees (a cable kinked
+            // tighter than about its bay length) is beyond what the lattice
+            // resolves, and the measure degrades; the element fades out by
+            // 90 degrees rather than push a kink apart. The sections' tilt
+            // off the chord gives the bend: a section tilted by t keeps
+            // (1 + cos^2 t) / 2 of its spread across the chord.
+            const double kept = std::min(fa.inertia_arm / fa.spread, fb.inertia_arm / fb.spread);
+            const double at60 = 0.5 * (1.0 + 0.75), at90 = 0.75; // tilts of 30 and 45 degrees
+            double fade = std::min(1.0, std::max(0.0, (kept - at90) / (at60 - at90)));
+            fade = fade * fade * (3.0 - 2.0 * fade);
+            const double torque_b = fade * (-tw.k * tw.roll - tw.c * (fb.spin - fa.spin));
             for (std::size_t j = 0; j < tw.a.size(); ++j)
             {
                 nodes[tw.a[j]].f = nodes[tw.a[j]].f + ToF(Cross(axis, fa.u[j]) * (-torque_b / fa.inertia_arm));

@@ -78,10 +78,12 @@ def patch():
     return cable_demo.run()
 
 
-def test_patching_threads_the_ring_and_seats_the_plug(patch):
+def test_patching_threads_the_ring_without_damage(patch):
+    """The cable follows the gripper through the D-ring, stays above its rated bend radius and takes
+    a set but no damage. (The gripper holds the plug rigidly: the plug checks are the path's.)"""
     assert patch["threads_ring"]
-    assert patch["plug_off_port_axis_mm"] < 2.0
-    assert patch["plug_insertion_mm"] > 10.0
-    assert patch["plug_axis_along_port"] > 0.99
+    assert patch["plug_off_port_axis_mm"] < 2.0 and patch["plug_insertion_mm"] > 10.0
+    assert patch["time_below_rating_s"] == 0.0
+    assert patch["beams_yielded"] > 0
     assert patch["beams_torn"] == 0 and patch["beams_damaged"] == 0
     assert patch["peak_section_roll_deg"] < 20.0
