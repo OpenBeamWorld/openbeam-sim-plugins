@@ -153,8 +153,24 @@ def build(args) -> tuple[str, str, dict]:
               f'        {{"beamSpring": {k_long:.6g}, "beamDamp": {damp(k_long, node_mass):.6g}, '
               '"beamDeform": "FLT_MAX", "beamStrength": "FLT_MAX"},']
     lines += rows(beams_long)
-    lines += [f'        {{"beamSpring": {k_diag:.6g}, "beamDamp": {damp(k_diag, node_mass):.6g}}},']
-    lines += rows(beams_diag)
+    # A strain-relief boot behind the plug: an elastic sleeve whose bending stiffness tapers from boot_ei
+    # times the cable's at the plug to the cable's own over boot_length, so a bend there spreads instead of
+    # concentrating where the cable meets the rigid plug. It stiffens the segments' jacket (diagonals).
+    cos2 = math.cos(math.pi / n) ** 2
+
+    def boot_factor(i: int) -> float:
+        d = length - (i + 0.5) * s                           # the segment's centre from the plug
+        if not plug_nodes or args.boot_length <= 0 or d >= args.boot_length:
+            return 1.0
+        ei_multiple = 1.0 + (args.boot_ei - 1.0) * (1.0 - d / args.boot_length)
+        return (ei_multiple * (0.5 + c * cos2) - 0.5) / (c * cos2)
+
+    factors = [boot_factor(i) for i in range(sections - 1)]
+    per_segment = 2 * n
+    for i, f in enumerate(factors):
+        if i == 0 or f != factors[i - 1]:
+            lines += [f'        {{"beamSpring": {f * k_diag:.6g}, "beamDamp": {damp(f * k_diag, node_mass):.6g}}},']
+        lines += rows(beams_diag[i * per_segment:(i + 1) * per_segment])
     lines += [f'        {{"beamSpring": {k_ring:.6g}, "beamDamp": {damp(k_ring, node_mass):.6g}}},']
     lines += rows(beams_ring)
     if plug_beams:
@@ -203,7 +219,7 @@ def build(args) -> tuple[str, str, dict]:
     gj_twist = max(0.0, gj - gj_lattice)
     materials += (f"# twist elements: GJ {gj:.4g} N m^2 for the cable, {gj_lattice:.3g} from the lattice's diagonals\n"
                   f"twist 0 {n} {sections} {gj_twist:.6g} {args.damping_ratio:.6g}\n")
-    k_node = 2 * k_long + (n - 1) * k_ring + 4 * k_diag
+    k_node = 2 * k_long + (n - 1) * k_ring + 4 * max(factors) * k_diag
     max_step = 2.0 / math.sqrt(k_node / node_mass)
     if gj_twist > 0:
         max_step = min(max_step, 2.0 / math.sqrt(4 * (gj_twist / s) / (n * node_mass * r * r)))
@@ -241,6 +257,10 @@ def main() -> int:
     ap.add_argument("--height", type=float, default=0.0, help="m; z of the cable's axis")
     ap.add_argument("--rj45", action="store_true", help="end the cable in an RJ45 plug (nodes rj_0 to rj_7)")
     ap.add_argument("--gj", type=float, help="torsional stiffness, N m^2 (default EI / 1.4, an isotropic rod's)")
+    ap.add_argument("--boot-length", type=float, default=0.04,
+                    help="m; the RJ45's strain-relief boot behind the plug (0: none)")
+    ap.add_argument("--boot-ei", type=float, default=3.0,
+                    help="the boot's bending stiffness at the plug as a multiple of the cable's, tapering to 1")
     args = ap.parse_args()
     if not args.min_bend_radius < args.yield_radius or not 0 < args.damage_strain < args.break_strain:
         ap.error("need min bend radius < yield radius and 0 < damage strain < break strain")

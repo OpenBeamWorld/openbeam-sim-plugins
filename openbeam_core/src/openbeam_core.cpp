@@ -565,11 +565,28 @@ struct ob_world
     struct SectionFrame
     {
         D3 centre, mean_v;
-        std::vector<D3> u;
+        std::vector<D3> d, u;     // the nodes' offsets from the centre, and those across the axis
         double inertia_arm = 0.0; // sum of |u|^2
-        double spread = 0.0;      // the same before projecting across the axis
-        double spin = 0.0;
+        double spread = 0.0;      // sum of |d|^2
+        double inertia[9] = {};   // sum of |d|^2 1 - d d^T, row major
+        double spin = 0.0;        // the section's angular velocity about the axis
+        bool solid = false;       // inertia invertible
     };
+    // x = m^-1 y for a symmetric 3x3 m; false if m is singular.
+    static bool Solve3(const double m[9], D3 y, D3& x)
+    {
+        const double c00 = m[4] * m[8] - m[5] * m[7], c01 = m[5] * m[6] - m[3] * m[8], c02 = m[3] * m[7] - m[4] * m[6];
+        const double det = m[0] * c00 + m[1] * c01 + m[2] * c02;
+        const double scale = m[0] * m[0] + m[4] * m[4] + m[8] * m[8];
+        if (!(std::abs(det) > 1.0e-12 * scale * std::sqrt(scale)))
+            return false;
+        const double c11 = m[0] * m[8] - m[2] * m[6], c12 = m[2] * m[3] - m[0] * m[5];
+        const double c22 = m[0] * m[4] - m[1] * m[3];
+        // m is symmetric, so its inverse is the cofactor matrix over det.
+        x = D3{c00 * y.x + c01 * y.y + c02 * y.z, c01 * y.x + c11 * y.y + c12 * y.z,
+                c02 * y.x + c12 * y.y + c22 * y.z} * (1.0 / det);
+        return true;
+    }
     static void Frame(const std::vector<std::uint32_t>& ids, const std::vector<Node>& ns, SectionFrame& f)
     {
         f.centre = f.mean_v = D3{};
@@ -584,19 +601,29 @@ struct ob_world
     }
     static void Across(const std::vector<std::uint32_t>& ids, const std::vector<Node>& ns, D3 axis, SectionFrame& f)
     {
+        f.d.resize(ids.size());
         f.u.resize(ids.size());
         f.inertia_arm = f.spread = 0.0;
-        double spin = 0.0;
+        for (double& e : f.inertia)
+            e = 0.0;
+        D3 momentum; // sum of d x (v - mean v)
         for (std::size_t j = 0; j < ids.size(); ++j)
         {
-            D3 d = ToD(ns[ids[j]].x) - f.centre;
-            f.spread += Dot(d, d);
-            d = d - axis * Dot(d, axis);
-            f.u[j] = d;
-            f.inertia_arm += Dot(d, d);
-            spin += Dot(Cross(d, ToD(ns[ids[j]].v) - f.mean_v), axis);
+            const D3 d = ToD(ns[ids[j]].x) - f.centre;
+            f.d[j] = d;
+            const double dd = Dot(d, d);
+            f.spread += dd;
+            const double c[3] = {d.x, d.y, d.z};
+            for (int r = 0; r < 3; ++r)
+                for (int k = 0; k < 3; ++k)
+                    f.inertia[3 * r + k] += (r == k ? dd : 0.0) - c[r] * c[k];
+            f.u[j] = d - axis * Dot(d, axis);
+            f.inertia_arm += Dot(f.u[j], f.u[j]);
+            momentum = momentum + Cross(d, ToD(ns[ids[j]].v) - f.mean_v);
         }
-        f.spin = f.inertia_arm > 0.0 ? spin / f.inertia_arm : 0.0;
+        D3 omega;
+        f.solid = Solve3(f.inertia, momentum, omega);
+        f.spin = f.solid ? Dot(omega, axis) : 0.0;
     }
     // b's roll about the axis relative to a, less each pair's rest roll.
     static double Roll(const SectionFrame& fa, const SectionFrame& fb, D3 axis, const std::vector<double>& rest)
@@ -611,8 +638,12 @@ struct ob_world
         return std::atan2(sn, cs);
     }
 
-    // Equal and opposite torques about the line joining the centres, put on
-    // each section as forces across it that sum to zero.
+    // Equal and opposite torques about the line joining the centres, each put
+    // on its section as an exact couple: forces omega x d over the nodes'
+    // offsets d, omega = inertia^-1 torque, which sum to no force and to
+    // exactly the torque about the centre. (Forces across the axis alone
+    // would add a moment on a section tilted by a bend, and the pair would
+    // not conserve angular momentum.)
     void Twists()
     {
         SectionFrame fa, fb;
@@ -632,7 +663,7 @@ struct ob_world
             axis = axis * (1.0 / len);
             Across(tw.a, nodes, axis, fa);
             Across(tw.b, nodes, axis, fb);
-            if (!(fa.inertia_arm > 0.0 && fb.inertia_arm > 0.0))
+            if (!(fa.inertia_arm > 0.0 && fb.inertia_arm > 0.0 && fa.solid && fb.solid))
                 continue;
             tw.roll = Roll(fa, fb, axis, tw.rest);
             // Roll about the chord between the centres is twist while the bay
@@ -647,10 +678,13 @@ struct ob_world
             double fade = std::min(1.0, std::max(0.0, (kept - at90) / (at60 - at90)));
             fade = fade * fade * (3.0 - 2.0 * fade);
             const double torque_b = fade * (-tw.k * tw.roll - tw.c * (fb.spin - fa.spin));
+            D3 wa, wb;
+            Solve3(fa.inertia, axis * -torque_b, wa);
+            Solve3(fb.inertia, axis * torque_b, wb);
             for (std::size_t j = 0; j < tw.a.size(); ++j)
             {
-                nodes[tw.a[j]].f = nodes[tw.a[j]].f + ToF(Cross(axis, fa.u[j]) * (-torque_b / fa.inertia_arm));
-                nodes[tw.b[j]].f = nodes[tw.b[j]].f + ToF(Cross(axis, fb.u[j]) * (torque_b / fb.inertia_arm));
+                nodes[tw.a[j]].f = nodes[tw.a[j]].f + ToF(Cross(wa, fa.d[j]));
+                nodes[tw.b[j]].f = nodes[tw.b[j]].f + ToF(Cross(wb, fb.d[j]));
             }
         }
     }

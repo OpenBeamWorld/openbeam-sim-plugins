@@ -1,0 +1,5 @@
+mujoco==4.0.0
+gymnasium>=1.1.1,<2.0.0
+numpy>=2.0.0
+# Also needed, not on PyPI: the openbeam_mujoco plugin library, built by this
+# repository's build_windows.ps1 or build_linux.sh. See README.md.
