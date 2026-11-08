@@ -5,7 +5,8 @@ PhysX simulates the rigid bodies; OpenBeam simulates the JBeam structure. On
 every physics step, before PhysX steps (SimulationEvent.PHYSICS_PRE_STEP):
   1. each collider body's pose and velocity is read through the physics
      tensor API and handed to OpenBeam;
-  2. OpenBeam advances the physics dt in 0.5 ms steps against the ground
+  2. OpenBeam advances the physics dt in its own steps (0.5 ms unless set)
+     against the ground
      plane and those colliders;
   3. the force and torque the soft body put on each collider over that
      interval are applied to its body for the step PhysX is about to take.
@@ -16,6 +17,16 @@ torn beam as two red stubs snapped back towards its nodes.
 
 Colliders are rigid-body prims that are, or have as a direct child, a
 UsdGeom Sphere, Cube or Capsule (axis Z) centred on the body's origin.
+Kinematic colliders are any prims of those shapes that the host moves itself
+by their USD transform, such as a gripper, a spool or fixed scenery: OpenBeam
+takes each one's velocity from its pose one physics step back, and nothing
+acts back on it. A light body stiffly coupled to a cable would need a much
+smaller PhysX step to stay stable; a scripted or controller-driven part
+needs no coupling.
+
+For cables (assets/make_cable.py), pass the step, node radius, node damping,
+materials and friction it describes, and hold or let go of nodes with
+attach() and release().
 """
 
 from __future__ import annotations
@@ -25,7 +36,7 @@ import os
 import carb
 import numpy as np
 import omni.usd
-from pxr import Gf, Sdf, UsdGeom, UsdPhysics, Vt
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics, Vt
 
 from . import core
 
@@ -73,25 +84,49 @@ class SoftBody:
 
     def __init__(self, jbeam_path: str | os.PathLike, *, prim_path: str = "/World/OpenBeam",
                  position=(0.0, 0.0, 0.0), orientation=(1.0, 0.0, 0.0, 0.0), colliders=(),
-                 ground_height: float | None = 0.0, stress_scale: float = 2000.0, strain_scale: float = 0.05,
-                 beam_width: float = 0.012,
-                 stage=None):
+                 kinematic_colliders=(), ground_height: float | None = 0.0, stress_scale: float = 2000.0,
+                 strain_scale: float = 0.05, beam_width: float = 0.012, step: float | None = None,
+                 node_radius: float = 0.0, node_damping: float = 0.0, materials: str | os.PathLike | None = None,
+                 friction=None, attach=(), release_seconds: float = 0.05, stage=None):
+        """friction: (static, sliding) coefficients for the ground and every collider (default concrete's).
+        attach: (node pattern, collider path) pairs held from the first step, e.g. a cable's end in an
+        outlet; patterns are a JBeam id or a prefix ending in '*'."""
         from isaacsim.core.simulation_manager import SimulationEvent, SimulationManager
 
         self._sm = SimulationManager
         self.stage = stage or omni.usd.get_context().get_stage()
         self.world = core.World(jbeam_path, position, orientation)
         self.world.set_gravity(_scene_gravity(self.stage))
+        if step is not None:
+            self.world.set_step(step)
+        self.world.set_node_radius(node_radius)
+        self.world.set_node_damping(node_damping)
+        if materials is not None:
+            self.world.load_materials(materials)
         if ground_height is not None:
-            self.world.add_plane((0.0, 0.0, ground_height), (0.0, 0.0, 1.0))
+            self.world.add_plane((0.0, 0.0, ground_height), (0.0, 0.0, 1.0), friction)
         self.collider_paths = [str(p) for p in colliders]
         self._collider_ids = []
+        self._ids_by_path = {}
         for path in self.collider_paths:
             prim = self.stage.GetPrimAtPath(path)
             if not prim.IsValid() or not prim.HasAPI(UsdPhysics.RigidBodyAPI):
                 raise ValueError(f"{path}: an OpenBeam collider must be a rigid body prim")
             shape, size, _ = _collider_shape(prim)
-            self._collider_ids.append(self.world.add_collider(shape, size))
+            self._collider_ids.append(self.world.add_collider(shape, size, friction))
+            self._ids_by_path[path] = self._collider_ids[-1]
+        self._kinematic = []   # [collider id, gprim, last time, last position, last quaternion]
+        for path in (str(p) for p in kinematic_colliders):
+            prim = self.stage.GetPrimAtPath(path)
+            if not prim.IsValid():
+                raise ValueError(f"{path}: no such prim")
+            shape, size, gprim = _collider_shape(prim)
+            cid = self.world.add_collider(shape, size, friction)
+            self._kinematic.append([cid, self.stage.GetPrimAtPath(gprim), None, None, None])
+            self._ids_by_path[path] = cid
+        self.release_seconds = float(release_seconds)
+        self._initial_attach = [(pattern, str(path)) for pattern, path in attach]
+        self._pending = list(self._initial_attach)
         self.stress_scale = float(stress_scale)
         self.strain_scale = float(strain_scale)
         self.prim_path = prim_path
@@ -117,7 +152,22 @@ class SoftBody:
     def reset(self) -> None:
         self.world.reset()
         self.sim_time = 0.0
+        for k in self._kinematic:
+            k[2:] = [None, None, None]
+        self._pending = list(self._initial_attach)
         self.draw()
+
+    # -- holding nodes ------------------------------------------------------
+
+    def attach(self, pattern: str, collider_path: str) -> None:
+        """Welds the matching nodes to a collider where they are at the next physics step."""
+        if str(collider_path) not in self._ids_by_path:
+            raise ValueError(f"{collider_path} is not one of this soft body's colliders")
+        self._pending.append((pattern, str(collider_path)))
+
+    def release(self, pattern: str | None = None, seconds: float | None = None) -> None:
+        """Lets the matching nodes go (all if pattern is None), the grip fading over `seconds`."""
+        self.world.detach(pattern, self.release_seconds if seconds is None else seconds)
 
     def _on_stopped(self, *_):
         # The timeline was stopped: PhysX restores the stage, OpenBeam does the same.
@@ -125,6 +175,30 @@ class SoftBody:
         self.reset()
 
     # -- coupling -----------------------------------------------------------
+
+    def _kinematic_states(self) -> None:
+        for k in self._kinematic:
+            cid, gprim, last_t, last_p, last_q = k
+            m = UsdGeom.Xformable(gprim).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+            t = Gf.Transform(m)
+            p = np.array(t.GetTranslation(), dtype=float)
+            q = t.GetRotation().GetQuat()
+            q = np.array([q.GetReal(), *q.GetImaginary()], dtype=float)
+            v, w = np.zeros(3), np.zeros(3)
+            dt = self.sim_time - last_t if last_t is not None else 0.0
+            if dt > 0.0:
+                v = (p - last_p) / dt
+                if np.dot(q, last_q) < 0.0:
+                    q = -q
+                # q * conj(last): the turn over the step, as an angle about an axis.
+                w0, x0 = last_q[0], -last_q[1:]
+                real = q[0] * w0 - np.dot(q[1:], x0)
+                imag = q[0] * x0 + w0 * q[1:] + np.cross(q[1:], x0)
+                sn = float(np.linalg.norm(imag))
+                if sn > 1e-12:
+                    w = imag / sn * (2.0 * np.arctan2(sn, real)) / dt
+            self.world.set_collider_state(cid, p, q, v, w)
+            k[2:] = [self.sim_time, p, q]
 
     def _ensure_view(self) -> bool:
         if not self.collider_paths:
@@ -163,6 +237,11 @@ class SoftBody:
                 # Shapes are centred on the body origin, taken as the centre of
                 # mass of these primitives, so the COM velocity is the origin's.
                 self.world.set_collider_state(cid, tf[i, :3], quat, vel[i, :3], vel[i, 3:])
+        self._kinematic_states()
+        for pattern, path in self._pending:
+            if self.world.attach(pattern, self._ids_by_path[path]) == 0:
+                carb.log_warn(f"OpenBeam: attach {pattern}:{path} matched no node")
+        self._pending = []
         self.world.advance(dt)
         self.sim_time += dt
         if n:

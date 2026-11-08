@@ -57,6 +57,7 @@ def _load() -> ctypes.CDLL:
     P, D, I, U = ctypes.c_void_p, ctypes.c_double, ctypes.c_int, ctypes.c_size_t
     sig = {
         "ob_core_api_version": (I, []),
+        "ob_ground_model_concrete": (GroundModel, []),
         "ob_world_create_from_jbeam_file": (P, [ctypes.c_char_p, P, P, ctypes.c_char_p, U]),
         "ob_world_create_from_jbeam_text": (P, [ctypes.c_char_p, ctypes.c_char_p, P, P, ctypes.c_char_p, U]),
         "ob_world_destroy": (None, [P]),
@@ -151,13 +152,22 @@ class World:
         g = _vec(g, 3)
         self._lib.ob_world_set_gravity(self._h, g.ctypes.data)
 
-    def add_plane(self, point, normal) -> int:
-        point, normal = _vec(point, 3), _vec(normal, 3)
-        return self._lib.ob_world_add_plane(self._h, point.ctypes.data, normal.ctypes.data, None)
+    def _surface(self, friction):
+        """A ground model: concrete, or concrete with (static, sliding) friction coefficients."""
+        if friction is None:
+            return None
+        gm = self._lib.ob_ground_model_concrete()
+        gm.ms, gm.mc = float(friction[0]), float(friction[1])
+        return ctypes.byref(gm)
 
-    def add_collider(self, shape: int, size) -> int:
+    def add_plane(self, point, normal, friction=None) -> int:
+        """A ground plane; friction (static, sliding) defaults to concrete's (1.2, 0.75)."""
+        point, normal = _vec(point, 3), _vec(normal, 3)
+        return self._lib.ob_world_add_plane(self._h, point.ctypes.data, normal.ctypes.data, self._surface(friction))
+
+    def add_collider(self, shape: int, size, friction=None) -> int:
         size = _vec(size, 3)
-        cid = self._lib.ob_world_add_collider(self._h, shape, size.ctypes.data, None)
+        cid = self._lib.ob_world_add_collider(self._h, shape, size.ctypes.data, self._surface(friction))
         if cid < 0:
             raise ValueError(f"bad collider shape {shape} or size {size}")
         return cid

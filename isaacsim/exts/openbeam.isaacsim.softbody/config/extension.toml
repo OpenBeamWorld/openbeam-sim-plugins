@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
-version = "0.1.0"
+version = "0.2.0"
 title = "OpenBeam Soft Body"
-description = "OpenBeam's JBeam soft-body physics (beam networks that dent, yield and tear) coupled two ways to PhysX rigid bodies."
+description = "OpenBeam's JBeam soft-body physics (beam networks that dent, yield and tear, and cables that bend, twist and take a set) coupled to PhysX rigid bodies and kinematic prims."
 category = "Simulation"
 keywords = ["openbeam", "jbeam", "soft body", "deformation", "physics"]
 authors = ["OpenBeam"]
