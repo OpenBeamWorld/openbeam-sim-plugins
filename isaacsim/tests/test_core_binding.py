@@ -95,3 +95,16 @@ def test_beam_damage_reports_yield_and_tears():
     w.reset()
     plastic, damage = w.beam_damage()
     assert not plastic.any() and not damage.any()
+
+
+def test_cable_materials_add_twist():
+    """make_cable.py's .materials adds one twist element per pair of neighbouring cross-sections."""
+    cable = HERE.parents[1] / "assets" / "cat6_coil.jbeam"
+    w = core.World(cable)
+    assert w.load_materials(cable.with_suffix(".materials")) == 160      # the 4 x 40 conductor beams
+    assert w.twist().shape == (40,)
+    with pytest.raises(ValueError):
+        w.add_rod_twist(0, 4, 42, 0.001)                                  # past the cable's 41 sections
+    w.set_step(0.000033)
+    w.advance(0.05)
+    assert np.abs(w.twist()).max() < 1e-3                                 # at rest: no roll

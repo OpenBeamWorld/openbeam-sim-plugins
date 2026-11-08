@@ -45,7 +45,8 @@
 namespace {
 
 const char* const kAttributes[] = {"jbeam", "pos", "quat", "colliders", "grounds", "stress_scale",
-    "strain_scale", "beam_width", "step", "node_radius", "node_damping", "attach", "materials", "release"};
+    "strain_scale", "beam_width", "step", "node_radius", "node_damping", "attach", "materials", "release",
+    "friction"};
 constexpr int kSensorDim = 6;
 
 struct ColliderBinding
@@ -53,6 +54,12 @@ struct ColliderBinding
     int geom = -1;
     int body = -1;
     int core_id = -1;
+    // A mocap body has no velocity in MuJoCo; its collider's comes from its
+    // pose one step back, so carried nodes move with it rather than jump.
+    bool mocap = false;
+    double last_time = -1.0;
+    double last_pos[3] = {0, 0, 0}, last_quat[4] = {1, 0, 0, 0};
+    double velocity[6] = {0, 0, 0, 0, 0, 0}; // (angular, linear), as mj_objectVelocity
 };
 
 struct Instance
@@ -70,6 +77,7 @@ struct Instance
     double strain_scale = 0.05;    // plastic strain drawn full red
     double beam_width = 0.012;
     double release_seconds = 0.05; // how long a released grip takes to open
+    ob_ground_model surface = ob_ground_model_concrete(); // friction for this instance's planes and colliders
     std::vector<double> scratch_positions;
     std::vector<int> pairs;
     std::vector<float> stress, rest, plastic, damage;
@@ -147,9 +155,13 @@ void BindScene(const mjModel* m, int instance, Instance& inst)
             mju_warning("openbeam.softbody: collider geom '%s' is not a sphere, capsule or box", name.c_str());
             continue;
         }
-        const int id = ob_world_add_collider(inst.world, shape, size, nullptr);
+        const int id = ob_world_add_collider(inst.world, shape, size, &inst.surface);
         if (id >= 0)
+        {
             inst.colliders.push_back(ColliderBinding{g, m->geom_bodyid[g], id});
+            // Mocap: the geom's body is a mocap body or welded to one.
+            inst.colliders.back().mocap = m->body_mocapid[m->body_weldid[m->geom_bodyid[g]]] >= 0;
+        }
     }
 }
 
@@ -161,7 +173,7 @@ void AddPlanes(const mjModel* m, const mjData* d, Instance& inst)
             continue;
         const mjtNum* mat = d->geom_xmat + 9 * c.geom;
         const double normal[3] = {mat[2], mat[5], mat[8]}; // the plane's local z
-        ob_world_add_plane(inst.world, d->geom_xpos + 3 * c.geom, normal, nullptr);
+        ob_world_add_plane(inst.world, d->geom_xpos + 3 * c.geom, normal, &inst.surface);
     }
 }
 
@@ -222,6 +234,12 @@ int Init(const mjModel* m, mjData* d, int instance)
         inst->beam_width = value;
     if (ParseNumbers(Config(m, instance, "release"), 1, &value) && value >= 0.0)
         inst->release_seconds = value;
+    double friction[2];
+    if (ParseNumbers(Config(m, instance, "friction"), 2, friction))
+    {
+        inst->surface.ms = static_cast<float>(friction[0]); // static
+        inst->surface.mc = static_cast<float>(friction[1]); // sliding
+    }
     if (ParseNumbers(Config(m, instance, "step"), 1, &value) && ob_world_set_step(world, value) != 0)
         mju_warning("openbeam.softbody: 'step' must be from 1e-6 to 0.0005 s; keeping 0.0005");
     if (ParseNumbers(Config(m, instance, "node_radius"), 1, &value))
@@ -284,10 +302,54 @@ void ApplyWrenches(const mjModel* m, mjData* d, Instance& inst)
     }
 }
 
+// A mocap collider's velocity from its pose now and one step back (zero on the
+// first step and after a reset).
+void UpdateMocapVelocity(const mjData* d, ColliderBinding& c)
+{
+    double q[4];
+    GeomQuat(d, c.geom, q);
+    const double* x = d->geom_xpos + 3 * c.geom;
+    const double dt = d->time - c.last_time;
+    for (double& v : c.velocity)
+        v = 0.0;
+    if (c.last_time >= 0.0 && dt > 0.0)
+    {
+        for (int k = 0; k < 3; ++k)
+            c.velocity[3 + k] = (x[k] - c.last_pos[k]) / dt;
+        // q * conj(last): the rotation over the step, as an angle about an axis.
+        const double* l = c.last_quat;
+        double w = q[0] * l[0] + q[1] * l[1] + q[2] * l[2] + q[3] * l[3];
+        double v[3] = {-q[0] * l[1] + q[1] * l[0] - q[2] * l[3] + q[3] * l[2],
+            -q[0] * l[2] + q[1] * l[3] + q[2] * l[0] - q[3] * l[1],
+            -q[0] * l[3] - q[1] * l[2] + q[2] * l[1] + q[3] * l[0]};
+        if (w < 0.0)
+        {
+            w = -w;
+            for (double& e : v)
+                e = -e;
+        }
+        const double sn = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        if (sn > 1.0e-12)
+        {
+            const double angle = 2.0 * std::atan2(sn, w);
+            for (int k = 0; k < 3; ++k)
+                c.velocity[k] = v[k] / sn * angle / dt;
+        }
+    }
+    c.last_time = d->time;
+    for (int k = 0; k < 3; ++k)
+        c.last_pos[k] = x[k];
+    for (int k = 0; k < 4; ++k)
+        c.last_quat[k] = q[k];
+}
+
 void SetColliderState(const mjModel* m, const mjData* d, const Instance& inst, const ColliderBinding& c)
 {
     mjtNum velocity[6]; // (angular, linear), world frame, at the geom centre
-    mj_objectVelocity(m, d, mjOBJ_GEOM, c.geom, velocity, 0);
+    if (c.mocap)
+        std::copy(c.velocity, c.velocity + 6, velocity);
+    else
+        mj_objectVelocity(m, d, mjOBJ_GEOM, c.geom, velocity, 0);
     double q[4];
     GeomQuat(d, c.geom, q);
     ob_world_set_collider_state(inst.world, c.core_id, d->geom_xpos + 3 * c.geom, q, velocity + 3, velocity);
@@ -341,10 +403,17 @@ void ComputePassive(const mjModel* m, mjData* d, Instance& inst)
     }
     if (!inst.advanced || d->time != inst.last_time)
     {
-        for (const ColliderBinding& c : inst.colliders)
+        for (ColliderBinding& c : inst.colliders)
         {
-            if (c.core_id >= 0)
-                SetColliderState(m, d, inst, c);
+            if (c.core_id < 0)
+                continue;
+            if (c.mocap)
+            {
+                if (d->time < c.last_time)
+                    c.last_time = -1.0; // reset: no motion carried over
+                UpdateMocapVelocity(d, c);
+            }
+            SetColliderState(m, d, inst, c);
         }
         if (!inst.attachments_made)
         {

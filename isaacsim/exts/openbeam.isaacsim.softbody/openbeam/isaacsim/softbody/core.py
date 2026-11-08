@@ -88,6 +88,10 @@ def _load() -> ctypes.CDLL:
         "ob_world_attached_count": (I, [P]),
         "ob_world_find_node": (I, [P, ctypes.c_char_p]),
         "ob_world_load_materials": (I, [P, ctypes.c_char_p, ctypes.c_char_p, U]),
+        "ob_world_add_twist": (I, [P, P, P, I, D, D]),
+        "ob_world_add_rod_twist": (I, [P, I, I, I, D, D]),
+        "ob_world_twist_count": (I, [P]),
+        "ob_world_get_twist": (None, [P, P]),
         "ob_world_get_stats": (None, [P, ctypes.POINTER(Stats)]),
         "ob_world_state_digest": (ctypes.c_ulonglong, [P]),
     }
@@ -243,6 +247,23 @@ class World:
         damage = np.zeros(self.beam_count, dtype=np.float32)
         self._lib.ob_world_get_beam_damage(self._h, plastic.ctypes.data, damage.ctypes.data)
         return plastic, damage
+
+    def add_rod_twist(self, first_node: int, per_section: int, sections: int, gj: float,
+                      damping_ratio: float = 0.05) -> int:
+        """Twist stiffness GJ (N m^2) along a rod of `sections` cross-sections of `per_section` nodes;
+        returns the elements added. .materials files from make_cable.py add these for you."""
+        n = self._lib.ob_world_add_rod_twist(self._h, first_node, per_section, sections, float(gj),
+                                             float(damping_ratio))
+        if n < 0:
+            raise ValueError("bad rod twist: nodes out of range, too few per section, or coincident sections")
+        return n
+
+    def twist(self) -> np.ndarray:
+        """Each twist element's roll from rest at the last step, radians."""
+        out = np.zeros(self._lib.ob_world_twist_count(self._h))
+        if out.size:
+            self._lib.ob_world_get_twist(self._h, out.ctypes.data)
+        return out
 
     def stats(self) -> dict:
         s = Stats()

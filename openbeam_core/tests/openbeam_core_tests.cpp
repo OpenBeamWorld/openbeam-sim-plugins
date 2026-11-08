@@ -452,6 +452,117 @@ void TestAttachment()
     ob_world_destroy(w);
 }
 
+void TestReleaseStable()
+{
+    // A 1 g, 20000 N/m chain at a 0.2 ms step uses most of its stability
+    // margin (fastest mode times the step 1.8, limit 2). Two nodes welded to
+    // a collider and let go over 0.05 s: the chain swings down as it would,
+    // the opening grip adding nothing that destabilises it.
+    ob_world* w = Make(Chain(21, 0.025, 0.001, 20000.0));
+    CHECK(w != nullptr);
+    if (!w)
+        return;
+    CHECK(ob_world_set_step(w, 0.0002) == 0);
+    const double size[3] = {0.001, 0.001, 0.001}, q[4] = {1, 0, 0, 0}, zero[3] = {0, 0, 0};
+    const int c = ob_world_add_collider(w, OB_SHAPE_BOX, size, nullptr);
+    const double at[3] = {0.25, 0, 1.2};
+    ob_world_set_collider_state(w, c, at, q, zero, zero);
+    CHECK(ob_world_attach_node(w, 1, c) == 0 && ob_world_attach_node(w, 2, c) == 0);
+    ob_world_advance(w, 0.5);
+    CHECK(ob_world_release_node(w, 1, 0.05) == 0 && ob_world_release_node(w, 2, 0.05) == 0);
+    double fastest = 0.0;
+    for (int i = 0; i < 150; ++i)
+    {
+        ob_world_advance(w, 0.002);
+        fastest = std::max(fastest, FastestNode(w));
+    }
+    std::printf("chain let go over 0.05 s at a 0.2 ms step: fastest node %.3g m/s, %d still attached\n", fastest,
+        ob_world_attached_count(w));
+    CHECK(fastest < 5.0);
+    CHECK(ob_world_attached_count(w) == 0);
+    ob_world_destroy(w);
+}
+
+// Two triangles 0.1 m apart joined by axial beams only: the far one is turned
+// 0.3 rad about the axis by a welded collider. With a twist element of
+// 0.2 N m/rad the collider feels 0.06 N m more torque than without it, and
+// the element reads the roll.
+double TwistTorque(bool with_twist, double* roll)
+{
+    std::string body = "\"nodes\":[[\"id\",\"posX\",\"posY\",\"posZ\"],{\"nodeWeight\":0.01},";
+    for (int s = 0; s < 2; ++s)
+        for (int j = 0; j < 3; ++j)
+        {
+            const double a = 2.0 * 3.14159265358979 * j / 3.0;
+            char row[128];
+            std::snprintf(row, sizeof(row), "[\"s%d_%d\",%.6f,%.6f,%.6f],", s, j, 0.1 * s, 0.02 * std::cos(a),
+                0.02 * std::sin(a));
+            body += row;
+        }
+    body.back() = ']';
+    body += ",\"beams\":[[\"id1:\",\"id2:\"],{\"beamSpring\":20000,\"beamDamp\":20},";
+    for (int j = 0; j < 3; ++j)
+    {
+        body += "[\"s0_" + std::to_string(j) + "\",\"s1_" + std::to_string(j) + "\"],";
+        for (int s = 0; s < 2; ++s)
+            body += "[\"s" + std::to_string(s) + "_" + std::to_string(j) + "\",\"s" + std::to_string(s) + "_" +
+                std::to_string((j + 1) % 3) + "\"],";
+    }
+    body.back() = ']';
+    ob_world* w = Make(body);
+    CHECK(w != nullptr);
+    if (!w)
+        return 0.0;
+    const double zero3[3] = {0, 0, 0};
+    ob_world_set_gravity(w, zero3);
+    ob_world_set_step(w, 0.0001);
+    if (with_twist)
+    {
+        CHECK(ob_world_add_rod_twist(w, 0, 3, 3, 0.02, 0.1) == -1); // only two sections
+        CHECK(ob_world_add_rod_twist(w, 0, 3, 2, 0.02, 0.1) == 1);  // GJ 0.02 N m^2 over 0.1 m
+        CHECK(ob_world_twist_count(w) == 1);
+    }
+    const double size[3] = {0.001, 0.001, 0.001}, q0[4] = {1, 0, 0, 0};
+    const int a = ob_world_add_collider(w, OB_SHAPE_BOX, size, nullptr);
+    const int b = ob_world_add_collider(w, OB_SHAPE_BOX, size, nullptr);
+    const double pa[3] = {0, 0, 0}, pb[3] = {0.1, 0, 0};
+    ob_world_set_collider_state(w, a, pa, q0, zero3, zero3);
+    ob_world_set_collider_state(w, b, pb, q0, zero3, zero3);
+    for (int j = 0; j < 3; ++j)
+    {
+        ob_world_attach_node(w, j, a);
+        ob_world_attach_node(w, 3 + j, b);
+    }
+    const double target = 0.3, dt = 0.001;
+    double angle = 0.0;
+    for (int i = 0; i < 1500; ++i)
+    {
+        const double rate = i < 1000 ? target / 1.0 : 0.0;
+        const double q[4] = {std::cos(angle / 2), std::sin(angle / 2), 0, 0}, spin[3] = {rate, 0, 0};
+        ob_world_set_collider_state(w, a, pa, q0, zero3, zero3);
+        ob_world_set_collider_state(w, b, pb, q, zero3, spin);
+        ob_world_advance(w, dt);
+        angle = std::min(target, angle + rate * dt);
+    }
+    double force[3], torque[3];
+    ob_world_get_collider_wrench(w, b, pb, force, torque);
+    if (roll)
+        ob_world_get_twist(w, roll);
+    ob_world_destroy(w);
+    return torque[0];
+}
+
+void TestTwist()
+{
+    double roll = 0.0;
+    const double without = TwistTorque(false, nullptr);
+    const double with = TwistTorque(true, &roll);
+    std::printf("twist 0.3 rad: torque on the turned end %.5f N m with GJ/L = 0.2 N m/rad, %.5f N m without; "
+                "roll %.4f rad\n", with, without, roll);
+    CHECK(std::abs((with - without) - (-0.2 * 0.3)) < 0.01 * 0.06);
+    CHECK(std::abs(roll - 0.3) < 1e-3);
+}
+
 } // namespace
 
 int main()
@@ -468,6 +579,8 @@ int main()
     TestStep();
     TestNodeRadius();
     TestAttachment();
+    TestReleaseStable();
+    TestTwist();
     if (g_failures)
     {
         std::printf("%d check(s) failed\n", g_failures);

@@ -214,6 +214,20 @@ struct ob_world
         D3 hold; // the force the weld last applied: an opening grip starts from it
     };
     std::vector<Attachment> attachments;
+    // Twist stiffness between two cross-sections (St-Venant torsion, as in
+    // discrete elastic rods). A lattice of axial beams resists twist only
+    // through diagonals that lie nearly along its axis, far less than the
+    // body it stands for, and a bent bay can roll over rather than strain
+    // its fibres; this supplies the torsion the lattice lacks.
+    struct Twist
+    {
+        std::vector<std::uint32_t> a, b;
+        std::vector<double> rest;           // per node pair: b's roll from a about the axis at rest
+        std::vector<std::uint32_t> beams;   // the beams joining the sections: all torn, no twist
+        double k = 0.0, c = 0.0;            // N m / rad, N m s / rad
+        double roll = 0.0;                  // last step's roll from rest, radians
+    };
+    std::vector<Twist> twists;
     double carry = 0.0;
     unsigned long long steps = 0, contacts = 0;
     unsigned int skipped = 0;
@@ -228,6 +242,8 @@ struct ob_world
         contacts = 0;
         last_advance_us = 0.0;
         attachments.clear();
+        for (Twist& tw : twists)
+            tw.roll = 0.0;
         for (Collider& c : colliders)
         {
             c.sum_force = c.sum_moment = D3{};
@@ -512,15 +528,23 @@ struct ob_world
             D3 f_needed;
             if (a.release_rate > 0.0f)
             {
-                // Opening: a spring-damper to the carried point, stiff at first
-                // (natural frequency 0.5 / step), softening to nothing.
+                // Opening: the weld's last force, fading, and a critically
+                // damped spring to the carried point, stiff at first (natural
+                // frequency 0.5 / step) and softening to nothing. The spring
+                // and damper act on the end-of-step state (backward Euler), so
+                // they add no explicit stiffness or damping to a node whose
+                // beams already use the step's stability margin.
                 const double m = static_cast<double>(n.m);
                 const double w0 = 0.5 / step;
                 const double k = m * w0 * w0 * static_cast<double>(a.strength);
-                const D3 point = c.position + c.velocity * t + arm + Cross(c.angular_velocity, arm) * t;
+                const double damp = 2.0 * std::sqrt(k * m);
+                const D3 point = c.position + c.velocity * t1 + arm + Cross(c.angular_velocity, arm) * t1;
                 const D3 point_velocity = c.velocity + Cross(c.angular_velocity, arm);
-                f_needed = a.hold * static_cast<double>(a.strength) + (point - ToD(n.x)) * k +
-                    (point_velocity - ToD(n.v)) * (2.0 * std::sqrt(k * m));
+                const D3 v = ToD(n.v), f_other = ToD(n.f);
+                const D3 rhs = v + (f_other + a.hold * static_cast<double>(a.strength) + (point - ToD(n.x)) * k +
+                    point_velocity * damp) * (step / m);
+                const D3 v_new = rhs * (1.0 / (1.0 + step * step * k / m + step * damp / m));
+                f_needed = (v_new - v) * (m / step) - f_other;
             }
             else
             {
@@ -533,6 +557,88 @@ struct ob_world
             const D3 on_collider = f_needed * -1.0;
             c.sum_force = c.sum_force + on_collider;
             c.sum_moment = c.sum_moment + Cross(ToD(n.x), on_collider);
+        }
+    }
+
+    // A section's centre and mean velocity, its nodes' offsets from the centre
+    // across the line joining two centres, and its spin about that line.
+    struct SectionFrame
+    {
+        D3 centre, mean_v;
+        std::vector<D3> u;
+        double inertia_arm = 0.0; // sum of |u|^2
+        double spin = 0.0;
+    };
+    static void Frame(const std::vector<std::uint32_t>& ids, const std::vector<Node>& ns, SectionFrame& f)
+    {
+        f.centre = f.mean_v = D3{};
+        for (std::uint32_t i : ids)
+        {
+            f.centre = f.centre + ToD(ns[i].x);
+            f.mean_v = f.mean_v + ToD(ns[i].v);
+        }
+        const double inv = 1.0 / static_cast<double>(ids.size());
+        f.centre = f.centre * inv;
+        f.mean_v = f.mean_v * inv;
+    }
+    static void Across(const std::vector<std::uint32_t>& ids, const std::vector<Node>& ns, D3 axis, SectionFrame& f)
+    {
+        f.u.resize(ids.size());
+        f.inertia_arm = 0.0;
+        double spin = 0.0;
+        for (std::size_t j = 0; j < ids.size(); ++j)
+        {
+            D3 d = ToD(ns[ids[j]].x) - f.centre;
+            d = d - axis * Dot(d, axis);
+            f.u[j] = d;
+            f.inertia_arm += Dot(d, d);
+            spin += Dot(Cross(d, ToD(ns[ids[j]].v) - f.mean_v), axis);
+        }
+        f.spin = f.inertia_arm > 0.0 ? spin / f.inertia_arm : 0.0;
+    }
+    // b's roll about the axis relative to a, less each pair's rest roll.
+    static double Roll(const SectionFrame& fa, const SectionFrame& fb, D3 axis, const std::vector<double>& rest)
+    {
+        double sn = 0.0, cs = 0.0;
+        for (std::size_t j = 0; j < fa.u.size(); ++j)
+        {
+            const D3 ua = fa.u[j] * std::cos(rest[j]) + Cross(axis, fa.u[j]) * std::sin(rest[j]);
+            sn += Dot(Cross(ua, fb.u[j]), axis);
+            cs += Dot(ua, fb.u[j]);
+        }
+        return std::atan2(sn, cs);
+    }
+
+    // Equal and opposite torques about the line joining the centres, put on
+    // each section as forces across it that sum to zero.
+    void Twists()
+    {
+        SectionFrame fa, fb;
+        for (Twist& tw : twists)
+        {
+            bool joined = tw.beams.empty();
+            for (std::uint32_t b : tw.beams)
+                joined = joined || !beams[b].broken;
+            if (!joined)
+                continue;
+            Frame(tw.a, nodes, fa);
+            Frame(tw.b, nodes, fb);
+            D3 axis = fb.centre - fa.centre;
+            const double len = std::sqrt(Dot(axis, axis));
+            if (!(len > 1.0e-9))
+                continue;
+            axis = axis * (1.0 / len);
+            Across(tw.a, nodes, axis, fa);
+            Across(tw.b, nodes, axis, fb);
+            if (!(fa.inertia_arm > 0.0 && fb.inertia_arm > 0.0))
+                continue;
+            tw.roll = Roll(fa, fb, axis, tw.rest);
+            const double torque_b = -tw.k * tw.roll - tw.c * (fb.spin - fa.spin);
+            for (std::size_t j = 0; j < tw.a.size(); ++j)
+            {
+                nodes[tw.a[j]].f = nodes[tw.a[j]].f + ToF(Cross(axis, fa.u[j]) * (-torque_b / fa.inertia_arm));
+                nodes[tw.b[j]].f = nodes[tw.b[j]].f + ToF(Cross(axis, fb.u[j]) * (torque_b / fb.inertia_arm));
+            }
         }
     }
 
@@ -573,6 +679,7 @@ struct ob_world
             else
                 LegacyBeam(i);
         }
+        Twists();
         if (node_damping > 0.0f)
         {
             for (Node& n : nodes)
@@ -902,6 +1009,21 @@ int ob_world_load_materials(ob_world* world, const char* path, char* err, size_t
         const std::size_t hash = line.find('#');
         if (hash != std::string::npos)
             line.resize(hash);
+        char word[16] = {0};
+        if (std::sscanf(line.c_str(), " %15s", word) == 1 && std::strcmp(word, "twist") == 0)
+        {
+            long twist_first = 0, per = 0, sections = 0;
+            double gj = 0.0, ratio = 0.0;
+            if (std::sscanf(line.c_str(), " twist %ld %ld %ld %lf %lf", &twist_first, &per, &sections, &gj, &ratio) != 5 ||
+                ob_world_add_rod_twist(world, static_cast<int>(twist_first), static_cast<int>(per),
+                    static_cast<int>(sections), gj, ratio) < 0)
+            {
+                WriteError(err, err_len, std::string(path) + ":" + std::to_string(line_number) +
+                    ": expected 'twist first_node nodes_per_section sections gj_n_m2 damping_ratio' within the nodes");
+                return -1;
+            }
+            continue;
+        }
         long first = 0, count = 0;
         ob_beam_material m{};
         const int read = std::sscanf(line.c_str(), "%ld %ld %lf %lf %lf %lf %lf %lf", &first, &count, &m.area_m2,
@@ -928,6 +1050,115 @@ int ob_world_load_materials(ob_world* world, const char* path, char* err, size_t
         }
     }
     return configured;
+}
+
+int ob_world_add_twist(ob_world* world, const int* section_a, const int* section_b, int count, double stiffness,
+    double damping)
+{
+    if (!world || !section_a || !section_b || count < 3 || !(stiffness >= 0.0) || !(damping >= 0.0) ||
+        !std::isfinite(stiffness) || !std::isfinite(damping))
+        return -1;
+    ob_world::Twist tw;
+    const int n = static_cast<int>(world->nodes.size());
+    for (int j = 0; j < count; ++j)
+    {
+        if (section_a[j] < 0 || section_a[j] >= n || section_b[j] < 0 || section_b[j] >= n ||
+            section_a[j] == section_b[j])
+            return -1;
+        tw.a.push_back(static_cast<std::uint32_t>(section_a[j]));
+        tw.b.push_back(static_cast<std::uint32_t>(section_b[j]));
+    }
+    // Each pair's rest roll, from the structure as created.
+    ob_world::SectionFrame fa, fb;
+    ob_world::Frame(tw.a, world->rest_nodes, fa);
+    ob_world::Frame(tw.b, world->rest_nodes, fb);
+    D3 axis = fb.centre - fa.centre;
+    const double len = std::sqrt(Dot(axis, axis));
+    if (!(len > 1.0e-9))
+        return -1;
+    axis = axis * (1.0 / len);
+    ob_world::Across(tw.a, world->rest_nodes, axis, fa);
+    ob_world::Across(tw.b, world->rest_nodes, axis, fb);
+    for (int j = 0; j < count; ++j)
+    {
+        if (!(Dot(fa.u[j], fa.u[j]) > 1.0e-18 && Dot(fb.u[j], fb.u[j]) > 1.0e-18))
+            return -1; // a node on the axis has no roll
+        tw.rest.push_back(std::atan2(Dot(Cross(fa.u[j], fb.u[j]), axis), Dot(fa.u[j], fb.u[j])));
+    }
+    for (std::size_t i = 0; i < world->beams.size(); ++i)
+    {
+        const Beam& b = world->beams[i];
+        const auto in = [&b](const std::vector<std::uint32_t>& ids) {
+            return std::find(ids.begin(), ids.end(), b.a) != ids.end() ||
+                std::find(ids.begin(), ids.end(), b.b) != ids.end();
+        };
+        if (in(tw.a) && in(tw.b))
+            tw.beams.push_back(static_cast<std::uint32_t>(i));
+    }
+    tw.k = stiffness;
+    tw.c = damping;
+    world->twists.push_back(std::move(tw));
+    return static_cast<int>(world->twists.size() - 1);
+}
+
+int ob_world_add_rod_twist(ob_world* world, int first_node, int per_section, int sections, double gj,
+    double damping_ratio)
+{
+    if (!world || first_node < 0 || per_section < 3 || sections < 2 || !(gj >= 0.0) || !(damping_ratio >= 0.0) ||
+        !std::isfinite(gj) || !std::isfinite(damping_ratio) ||
+        static_cast<long long>(first_node) + static_cast<long long>(per_section) * sections >
+            static_cast<long long>(world->nodes.size()))
+        return -1;
+    std::vector<int> a(static_cast<std::size_t>(per_section)), b(a.size());
+    for (int i = 0; i + 1 < sections; ++i)
+    {
+        double inertia[2] = {0.0, 0.0};
+        D3 centre[2];
+        for (int side = 0; side < 2; ++side)
+        {
+            for (int j = 0; j < per_section; ++j)
+                centre[side] = centre[side] + ToD(world->rest_nodes[first_node + (i + side) * per_section + j].x);
+            centre[side] = centre[side] * (1.0 / per_section);
+        }
+        D3 axis = centre[1] - centre[0];
+        const double distance = std::sqrt(Dot(axis, axis));
+        if (!(distance > 1.0e-9))
+            return -1;
+        axis = axis * (1.0 / distance);
+        for (int side = 0; side < 2; ++side)
+        {
+            for (int j = 0; j < per_section; ++j)
+            {
+                const Node& n = world->rest_nodes[first_node + (i + side) * per_section + j];
+                D3 d = ToD(n.x) - centre[side];
+                d = d - axis * Dot(d, axis);
+                inertia[side] += static_cast<double>(n.m) * Dot(d, d);
+            }
+        }
+        // Torsion GJ over the length between the centres; damping a fraction
+        // of the pair's critical damping.
+        const double k = gj / distance;
+        const double reduced = inertia[0] + inertia[1] > 0.0 ? inertia[0] * inertia[1] / (inertia[0] + inertia[1]) : 0.0;
+        for (int j = 0; j < per_section; ++j)
+        {
+            a[j] = first_node + i * per_section + j;
+            b[j] = first_node + (i + 1) * per_section + j;
+        }
+        if (ob_world_add_twist(world, a.data(), b.data(), per_section, k,
+                2.0 * damping_ratio * std::sqrt(k * reduced)) < 0)
+            return -1;
+    }
+    return sections - 1;
+}
+
+int ob_world_twist_count(const ob_world* world) { return world ? static_cast<int>(world->twists.size()) : 0; }
+
+void ob_world_get_twist(const ob_world* world, double* roll)
+{
+    if (!world || !roll)
+        return;
+    for (std::size_t i = 0; i < world->twists.size(); ++i)
+        roll[i] = world->twists[i].roll;
 }
 
 int ob_world_set_step(ob_world* world, double step)

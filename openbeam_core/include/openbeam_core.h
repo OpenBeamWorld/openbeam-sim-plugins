@@ -189,9 +189,34 @@ OB_API void ob_world_get_beam_state(const ob_world* world, float* stress, float*
 OB_API int ob_world_set_beam_material(ob_world* world, int beam, const ob_beam_material* material);
 /* Reads beam materials from a text file, one line per range of beams:
  *   first count area_m2 E_pa yield_pa hardening_pa damage_onset capacity_j_per_m3
+ * and twist for rods (ob_world_add_rod_twist):
+ *   twist first_node nodes_per_section sections gj_n_m2 damping_ratio
  * with '#' starting a comment (make_cable.py writes these). Returns the number
  * of beams configured, or -1 with a message in err. */
 OB_API int ob_world_load_materials(ob_world* world, const char* path, char* err, size_t err_len);
+/* Twist stiffness between two cross-sections of `count` nodes each (count >=
+ * 3, paired in order): St-Venant torsion, as in discrete elastic rods. A
+ * torque -stiffness * roll - damping * roll rate acts about the line joining
+ * the sections' centres, where roll is section b's rotation about that line
+ * relative to section a since the structure was created; it reaches the nodes
+ * as forces across each section that sum to zero. A lattice of axial beams
+ * resists twist only through diagonals lying nearly along its axis, far less
+ * than a cable does, and a bent bay can roll over instead of straining its
+ * fibres; this supplies the torsion it lacks. Inactive once every beam joining
+ * the two sections is torn. stiffness in N m per radian, damping in N m s per
+ * radian. Returns the element's index, or -1. Survives ob_world_reset. */
+OB_API int ob_world_add_twist(ob_world* world, const int* section_a, const int* section_b, int count,
+    double stiffness, double damping);
+/* Twist along a rod of `sections` cross-sections of `per_section` nodes each,
+ * numbered section by section from first_node: one element per neighbouring
+ * pair, of stiffness gj / (the distance between their centres) and damping
+ * damping_ratio times the pair's critical damping. Returns the elements added,
+ * or -1. */
+OB_API int ob_world_add_rod_twist(ob_world* world, int first_node, int per_section, int sections,
+    double gj_n_m2, double damping_ratio);
+OB_API int ob_world_twist_count(const ob_world* world);
+/* Each twist element's roll from rest at the last step, radians. */
+OB_API void ob_world_get_twist(const ob_world* world, double* roll);
 /* Each beam's permanent damage, for drawing and analysis; either output may
  * be null. plastic_strain: the permanent axial strain, positive when the beam
  * has been stretched for good and negative when crushed (calibrated beams:

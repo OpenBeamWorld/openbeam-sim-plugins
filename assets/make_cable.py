@@ -23,18 +23,33 @@ parameters (written to <out>.materials, loaded with ob_world_load_materials or
 the plugins' `materials` option). The diagonal and ring beams are the jacket
 and stay elastic: they spread a bend along the cable instead of letting it fold
 at one plastic hinge, and spring part of the conductors' set back, as a real
-cable does. Bending to radius R strains a fibre at r_lattice by r/R, so three
-radii set the conductors:
-  yield radius     bent tighter, the cable keeps a permanent set (coil memory)
-  min bend radius  bent tighter, damage accumulates (the cable's rated limit)
-  break radius     bent this tight, a fibre tears
+cable does. Bending to radius R strains a fibre at r_lattice by r/R:
+  yield radius     bent tighter, the conductors yield and the cable keeps a
+                   permanent set (coil memory)
+  damage strain    accumulated plastic strain at which the conductors' ductility
+                   starts to run out (copper: about 0.3, a kink rather than a
+                   handling bend)
+  break strain     accumulated plastic strain at which a conductor tears (copper
+                   elongates 30 to 45 % before it breaks)
+The rated minimum bend radius (TIA-568: four diameters for Cat6) is a
+performance limit, not a mechanical one: it is written to the .materials
+header for hosts to check the cable's shape against, and is not a damage
+threshold. The engine's damage criterion accumulates plastic strain, so
+damage onset is set from copper's ductility rather than from one bend: a cable
+swinging in a gripper yields back and forth slightly and must not exhaust it.
 
 
 What is physical and what is not:
   - mass per metre, diameter, bending stiffness and min bend radius are cable
     data (defaults: Cat6, from the sources in the README);
-  - the yield radius and break radius are estimates until measured (README:
-    calibration);
+  - the damage and break strains are copper's ductility (handbook values);
+  - the yield radius is an estimate until measured (README: calibration);
+  - the torsional stiffness GJ defaults to an isotropic rod's, EI / (1 + nu)
+    with nu = 0.4; published cables range from about 0.16 EI to 2.5 EI. A
+    lattice of axial beams has almost none of its own (its diagonals lie
+    nearly along the axis), so the .materials file adds twist elements for
+    the rest: without them a tightly bent bay rolls over instead of bending
+    its conductors, and the cable never takes the set it should;
   - EA is an effective value: copper cables are nearly inextensible, which an
     explicit integrator follows only with a tiny step. The defaults stretch
     about 0.06 % under 1 N. The script prints the largest stable step for what
@@ -42,7 +57,7 @@ What is physical and what is not:
 
   python make_cable.py --out cat6_cable.jbeam --rj45          # Cat6 with an RJ45 plug
   python make_cable.py --out lc_fibre.jbeam --diameter 0.002 --mass-per-metre 0.0095 \\
-      --ei 0.0001 --ea 800 --min-bend-radius 0.0075 --yield-radius 0.05 --break-radius 0.003
+      --ei 0.0001 --ea 800 --min-bend-radius 0.0075 --yield-radius 0.05
 """
 
 from __future__ import annotations
@@ -151,8 +166,7 @@ def build(args) -> tuple[str, str, dict]:
         total = r / radius
         return max(0.0, (total - eps_y) / (1.0 + hardening_fraction))
 
-    onset = plastic_at(args.min_bend_radius)
-    at_break = plastic_at(args.break_radius)
+    onset, at_break = args.damage_strain, args.break_strain
 
     def material(k: float, beam_length: float) -> tuple:
         e = k * beam_length / area
@@ -168,21 +182,31 @@ def build(args) -> tuple[str, str, dict]:
     materials = "\n".join([
         f"# Beam materials for {args.out.name} (make_cable.py): first count area_m2 E_pa yield_pa",
         "#   hardening_pa damage_onset_plastic_strain damage_capacity_j_per_m3",
-        f"# yield radius {args.yield_radius} m, min bend radius {args.min_bend_radius} m, "
-        f"break radius {args.break_radius} m, lattice radius {r:.6g} m",
+        f"# yield radius {args.yield_radius} m, damage strain {args.damage_strain}, "
+        f"break strain {args.break_strain}, lattice radius {r:.6g} m",
+        f"# rated min bend radius {args.min_bend_radius} m (a shape limit for hosts to check)",
         "# longitudinal fibres: the conductors",
         fmt.format(0, n_long, *mat_long),
         "# the diagonal and ring beams (the jacket) and any plug stay elastic",
         "",
     ])
+    # Torsion: what the lattice's diagonals give (each changes length r^2 sin(2 pi / n) / diag per radian of
+    # roll between sections), and twist elements for the rest of the cable's GJ.
+    gj = args.gj if args.gj is not None else args.ei / 1.4
+    gj_lattice = 2 * n * k_diag * (r * r * math.sin(2 * math.pi / n) / diag) ** 2 * s
+    gj_twist = max(0.0, gj - gj_lattice)
+    materials += (f"# twist elements: GJ {gj:.4g} N m^2 for the cable, {gj_lattice:.3g} from the lattice's diagonals\n"
+                  f"twist 0 {n} {sections} {gj_twist:.6g} {args.damping_ratio:.6g}\n")
     k_node = 2 * k_long + (n - 1) * k_ring + 4 * k_diag
     max_step = 2.0 / math.sqrt(k_node / node_mass)
+    if gj_twist > 0:
+        max_step = min(max_step, 2.0 / math.sqrt(4 * (gj_twist / s) / (n * node_mass * r * r)))
     if plug_nodes:
         max_step = min(max_step, 2.0 / math.sqrt(7 * k_plug / plug_mass))
     info = {"sections": sections, "per_section": n, "nodes": len(nodes) + len(plug_nodes),
             "beams": n_long + n_diag + len(beams_ring) + len(plug_beams), "lattice_radius_m": r,
             "node_mass_kg": node_mass, "max_stable_step_s": max_step,
-            "contact_radius_m": max(0.0, args.diameter / 2.0 - r)}
+            "contact_radius_m": max(0.0, args.diameter / 2.0 - r), "gj_n_m2": gj, "gj_lattice_n_m2": gj_lattice}
     return "\n".join(lines), materials, info
 
 
@@ -200,16 +224,19 @@ def main() -> int:
     ap.add_argument("--yield-radius", type=float, default=0.15,
                     help="m; bent tighter, the cable keeps a set (an estimate until measured)")
     ap.add_argument("--min-bend-radius", type=float, default=0.025,
-                    help="m; bent tighter, it accumulates damage (Cat6: 4 x diameter, TIA-568)")
-    ap.add_argument("--break-radius", type=float, default=0.004,
-                    help="m; bent this tight, a fibre tears (an estimate until measured)")
+                    help="m; the rated limit (Cat6: 4 x diameter, TIA-568), checked against the shape")
+    ap.add_argument("--damage-strain", type=float, default=0.3,
+                    help="accumulated plastic strain where the conductors' damage begins (copper: about 0.3)")
+    ap.add_argument("--break-strain", type=float, default=0.45,
+                    help="accumulated plastic strain where a conductor tears (copper: 0.3 to 0.45)")
     ap.add_argument("--hardening", type=float, default=0.05, help="post-yield slope as a fraction of E")
     ap.add_argument("--damping-ratio", type=float, default=0.05, help="fraction of critical damping per beam")
     ap.add_argument("--height", type=float, default=0.0, help="m; z of the cable's axis")
     ap.add_argument("--rj45", action="store_true", help="end the cable in an RJ45 plug (nodes rj_0 to rj_7)")
+    ap.add_argument("--gj", type=float, help="torsional stiffness, N m^2 (default EI / 1.4, an isotropic rod's)")
     args = ap.parse_args()
-    if not args.break_radius < args.min_bend_radius < args.yield_radius:
-        ap.error("need break radius < min bend radius < yield radius")
+    if not args.min_bend_radius < args.yield_radius or not 0 < args.damage_strain < args.break_strain:
+        ap.error("need min bend radius < yield radius and 0 < damage strain < break strain")
     text, materials, info = build(args)
     args.out.write_bytes(text.encode("utf-8"))
     sidecar = args.out.with_suffix(".materials")
@@ -217,7 +244,8 @@ def main() -> int:
     print(f"wrote {args.out} and {sidecar.name}: {info['nodes']} nodes, {info['beams']} beams; lattice radius "
           f"{1000 * info['lattice_radius_m']:.2f} mm, node mass {1000 * info['node_mass_kg']:.3f} g; "
           f"largest stable step {1e6 * info['max_stable_step_s']:.0f} us; "
-          f"contact radius {1000 * info['contact_radius_m']:.2f} mm")
+          f"contact radius {1000 * info['contact_radius_m']:.2f} mm; GJ {info['gj_n_m2']:.3g} N m^2 "
+          f"({info['gj_lattice_n_m2']:.2g} from the lattice)")
     return 0
 
 
