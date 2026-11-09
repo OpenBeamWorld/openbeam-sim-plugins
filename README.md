@@ -274,6 +274,29 @@ cable.attach("rj_*", "/World/Gripper/Grip")      # at the next physics step
 cable.release("rj_*")                             # over release_seconds
 ```
 
+## OpenBeam Cloud over MCP
+
+The OpenBeam game runs in the cloud as well, and its account MCP server
+(`https://cloud.openbeam.world/mcp`) moves things between a cloud game and
+these hosts:
+
+| Tool | Does |
+| --- | --- |
+| `cloud_softbody_export` | Writes an actor's soft body as JBeam for these plugins |
+| `cloud_robot_export` | Writes a robot as MJCF or URDF |
+| `cloud_softbody_import` | Takes JBeam text, for example a `make_cable.py` cable |
+| `cloud_robot_import` | Takes a URDF or MJCF robot |
+| `cloud_robot_replay` | Replays a joint trajectory, such as a LeRobot episode, and reports how well the robot tracks it |
+
+[docs/CLOUD_MCP.md](docs/CLOUD_MCP.md) covers frames, units and recipes for
+each host. [`tools/openbeam_cloud.py`](tools/openbeam_cloud.py) makes one call
+from the command line:
+
+```bash
+export OPENBEAM_MCP_ACCESS_TOKEN=...
+python tools/openbeam_cloud.py cloud_softbody_export '{"actor": 3, "state": "live"}' --out from_cloud.jbeam
+```
+
 ## Build
 
 | Needs | Windows | Linux |
