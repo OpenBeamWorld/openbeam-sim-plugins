@@ -297,6 +297,10 @@ export OPENBEAM_MCP_ACCESS_TOKEN=...
 python tools/openbeam_cloud.py cloud_softbody_export '{"actor": 3, "state": "live"}' --out from_cloud.jbeam
 ```
 
+Private native-motion archives can also be played in MuJoCo and Isaac Sim. Both
+hosts import the robot and cable measurements at the recorded OpenBeam physics rate.
+See the [native motion import commands](docs/CLOUD_MCP.md#private-scene-motion-import).
+
 ## Build
 
 | Needs | Windows | Linux |

@@ -39,6 +39,21 @@ export OPENBEAM_MCP_ACCESS_TOKEN=...
 python tools/openbeam_cloud.py cloud_session_list
 ```
 
+### Private operator scene archives
+
+An operator can download a complete exported scene through the same command-line
+client. Configure an SSH host alias for the operator account and verify its host
+key through your operator channel. Use the SHA-256 from the export receipt.
+
+```bash
+python tools/openbeam_cloud.py scene-download --operator-host my-openbeam-operator --sha256 "$SCENE_SHA256" --out rack.zip
+```
+
+The command reads the immutable archive from the operator account's
+`~/.local/share/openbeam/exports/`, checks its digest, and publishes it at the
+requested path. Scene contents and runtime compatibility belong to the private
+export. The adapter repository distributes the client.
+
 ## Frames and units
 
 - Metres, kilograms, radians and seconds throughout.
@@ -187,3 +202,25 @@ them as JBeam defines them.
 Don't pair the original `.materials` file with an exported JBeam. It
 addresses beams by their index, but the export lists beams in the game's
 order and leaves out broken ones, so the indices need not line up.
+
+## Private scene motion import
+
+A private native-motion scene carries the completed OpenBeam physics ticks, a
+camera frame index and the operator's meshes. Download with `scene-download`
+and extract the verified ZIP. In a MuJoCo Python environment run
+
+```sh
+python tools/openbeam_step_mujoco.py --scene /private/scene --frames mj-frames --receipt mujoco.json
+```
+
+Run the Isaac entry point with Isaac Sim's Python launcher.
+
+```sh
+/path/to/isaac-sim/python.sh tools/openbeam_step_isaac.py --scene /private/scene --frames isaac-frames --receipt isaac.json
+```
+
+The camera uses the source tick and pose. Playback sets the measured rigid-link
+transforms, cable-node positions, velocities and strand and connector readouts.
+The cable stays at full physics rate between video frames. Both entry points
+read their cable state back and verify it against the recording. Cloud exports
+can also include a native MJCF initial scene and a standalone 2 kHz animated USD.

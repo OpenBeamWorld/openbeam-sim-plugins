@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import importlib.util
 import json
 import threading
@@ -19,6 +20,29 @@ SCRIPT = Path(__file__).resolve().parents[1] / "openbeam_cloud.py"
 spec = importlib.util.spec_from_file_location("openbeam_cloud", SCRIPT)
 openbeam_cloud = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(openbeam_cloud)
+
+
+def test_private_scene_download(monkeypatch, tmp_path):
+    archive = b"operator test artifact"
+    digest = hashlib.sha256(archive).hexdigest()
+    destination = tmp_path / "rack.zip"
+
+    def transfer(command, stdout, check):
+        assert command[-2:] == ["operator", f"cat .local/share/openbeam/exports/{digest}.zip"]
+        assert "StrictHostKeyChecking=yes" in command
+        stdout.write(archive)
+
+    monkeypatch.setattr(openbeam_cloud.subprocess, "run", transfer)
+    assert openbeam_cloud.main(["scene-download", "--operator-host", "operator",
+                                "--sha256", digest, "--out", str(destination)]) == 0
+    assert destination.read_bytes() == archive
+    with pytest.raises(FileExistsError):
+        openbeam_cloud.download_operator_scene("operator", digest, destination)
+    destination.unlink()
+    monkeypatch.setattr(openbeam_cloud.subprocess, "run", lambda command,stdout,check: stdout.write(b"incomplete"))
+    with pytest.raises(ValueError, match="SHA-256"):
+        openbeam_cloud.download_operator_scene("operator", digest, destination)
+    assert not destination.exists()
 
 
 class Endpoint:
