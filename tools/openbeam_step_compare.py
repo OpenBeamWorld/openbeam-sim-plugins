@@ -106,7 +106,8 @@ def main():
         for i in np.flatnonzero(state[1:]!=state[:-1])+1:
             transitions.append(dict(tick=int(m.first+i),state=states[state[i]]))
         receipt=dict(schema="openbeam.native-motion-comparison/v1",source=m.scene["source"],first_tick=m.first,
-            last_tick=m.last,steps=m.count,frames=count,fps=fps,duration_s=count/fps,node_count=len(m.indices),
+            last_tick=m.last,video_first_tick=m.frames[0]["tick"],video_last_tick=m.frames[-1]["tick"],
+            steps=m.count,frames=count,fps=fps,duration_s=count/fps,node_count=len(m.indices),
             rigid_links=len(m.links),largest_link_fit_rms_m=max(l["fit_rms_m"] for l in m.scene["links"]),
             video_sha256=file_sha256(staged),frame_ticks_sha256=m.frames_hash(),connector_transitions=transitions,
             sources={h["host"]:h for h in hosts},vertical_order=["OpenBeam","MuJoCo","Isaac Sim"])
@@ -119,4 +120,3 @@ def main():
 
 if __name__=="__main__":
     main()
-

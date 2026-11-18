@@ -60,3 +60,13 @@ def test_mujoco_readback_between_camera_frames(tmp_path):
         np.testing.assert_array_equal(sim.data.xpos[sim.link_ids],m.pos[i])
         assert sim.data.userdata[1]==m.strand["contacts"][i]
         assert sim.data.time==tick*.0005
+
+def test_video_can_cover_only_part_of_full_motion(tmp_path):
+    save_scene(tmp_path)
+    p=tmp_path/"scene.json"
+    scene=json.loads(p.read_text())
+    scene["frames"][0]["tick"]=10
+    scene["frame_stride"]=1
+    p.write_text(json.dumps(scene))
+    m=Motion(tmp_path)
+    assert m.first==9 and m.frames[0]["tick"]==10 and len(m.cable_positions)==3

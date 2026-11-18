@@ -42,10 +42,12 @@ class Motion:
                 raise ValueError("cable samples differ from the source recording")
         if self.pos.shape != (self.count, len(self.links), 3) or self.quat.shape != (self.count,len(self.links),4):
             raise ValueError("incomplete rigid-link trajectory")
-        if self.count < 2 or [f["tick"] for f in self.frames] != list(range(self.first, self.last+1, s["frame_stride"])):
+        video_ticks = [f["tick"] for f in self.frames]
+        stride = s["frame_stride"]
+        if (self.count < 2 or len(video_ticks) < 2 or stride <= 0
+                or video_ticks != list(range(video_ticks[0],video_ticks[-1]+1,stride))
+                or video_ticks[0] < self.first or video_ticks[-1] > self.last):
             raise ValueError("invalid video step index")
-        if self.frames[-1]["tick"] != self.last:
-            raise ValueError("video and motion end on different ticks")
         self.cable_positions = np.ascontiguousarray(positions)
         self.cable_velocities = np.ascontiguousarray(velocities)
         # Flat source measurements are also exposed to the host. Each strand row is
