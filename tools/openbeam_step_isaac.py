@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Play OpenBeam native physics steps in an Isaac Sim USD stage and capture RTX frames."""
 import traceback
 import hashlib

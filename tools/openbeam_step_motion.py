@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Read an extracted OpenBeam native-motion scene in either simulator."""
 import hashlib
 import json

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Import completed OpenBeam steps into MuJoCo. Render directly from the imported state."""
 import hashlib
 import json

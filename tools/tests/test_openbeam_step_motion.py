@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Verify fractional clock, camera axes and unmodified native measurements in MuJoCo."""
 import hashlib
 import json

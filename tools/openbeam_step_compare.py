@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Stack source OpenBeam video with both imported host views at the captured tick indices."""
 import argparse
 from contextlib import ExitStack
