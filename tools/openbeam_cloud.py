@@ -22,13 +22,46 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import hashlib
 import os
+import re
+import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
 
 DEFAULT_URL = "https://cloud.openbeam.world/mcp"
+
+
+def download_operator_scene(host: str, digest: str, destination: Path, ssh_config: Path | None = None) -> None:
+    """Fetch an immutable private scene using the operator's SSH identity."""
+    if not re.fullmatch(r"[a-zA-Z0-9_][a-zA-Z0-9_.@-]*", host):
+        raise ValueError("expected an SSH host or configured host alias")
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError("expected the lowercase SHA-256 from the export receipt")
+    destination = Path(destination)
+    if destination.exists():
+        raise FileExistsError(destination)
+    with tempfile.TemporaryDirectory(dir=destination.parent) as tmp:
+        staged = Path(tmp) / "scene.zip"
+        options = ["-F", str(ssh_config)] if ssh_config is not None else []
+        with staged.open("xb") as stream:
+            subprocess.run(["ssh", *options, "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+                            host, f"cat .local/share/openbeam/exports/{digest}.zip"],
+                           stdout=stream, check=True)
+        actual = hashlib.sha256()
+        with staged.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                actual.update(chunk)
+        if actual.hexdigest() != digest:
+            raise ValueError("scene archive SHA-256 differs from the export receipt")
+        os.chmod(staged, 0o600)
+        if os.name == "nt":
+            os.rename(staged, destination)  # Windows refuses an occupied destination.
+        else:
+            os.link(staged, destination)
 
 
 def call(url: str, token: str, tool: str, arguments: dict, timeout: float = 360.0) -> dict:
@@ -67,7 +100,16 @@ def main(argv=None) -> int:
                         help="add FILE to the files argument at PATH, base64 (meshes and MJCF includes)")
     parser.add_argument("--out", type=Path, help="write the document or jbeam field to this file")
     parser.add_argument("--url", default=os.environ.get("OPENBEAM_MCP_URL", DEFAULT_URL))
+    parser.add_argument("--operator-host", help="SSH host alias for private operator scene downloads")
+    parser.add_argument("--sha256", help="scene archive digest from the private export receipt")
+    parser.add_argument("--ssh-config", type=Path, help="optional SSH config for a private operator connection")
     args = parser.parse_args(argv)
+    if args.tool == "scene-download":
+        if not args.operator_host or not args.sha256 or not args.out:
+            parser.error("scene-download requires --operator-host, --sha256 and --out")
+        download_operator_scene(args.operator_host, args.sha256, args.out, args.ssh_config)
+        print(f"Downloaded private scene to {args.out}")
+        return 0
     token = os.environ.get("OPENBEAM_MCP_ACCESS_TOKEN")
     if not token:
         parser.error("set OPENBEAM_MCP_ACCESS_TOKEN to an access token for the account endpoint")

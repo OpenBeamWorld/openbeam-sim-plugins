@@ -39,6 +39,21 @@ export OPENBEAM_MCP_ACCESS_TOKEN=...
 python tools/openbeam_cloud.py cloud_session_list
 ```
 
+### Private operator scene archives
+
+An operator can download a complete exported scene through the same command-line
+client. Configure an SSH host alias for the operator account and verify its host
+key through your operator channel. Use the SHA-256 from the export receipt.
+
+```bash
+python tools/openbeam_cloud.py scene-download --operator-host my-openbeam-operator --sha256 "$SCENE_SHA256" --out rack.zip
+```
+
+The command reads the immutable archive from the operator account's
+`~/.local/share/openbeam/exports/`, checks its digest, and publishes it at the
+requested path. Scene contents and runtime compatibility belong to the private
+export. The adapter repository distributes the client.
+
 ## Frames and units
 
 - Metres, kilograms, radians and seconds throughout.
