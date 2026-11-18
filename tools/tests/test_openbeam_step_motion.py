@@ -9,6 +9,7 @@ import pytest
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from openbeam_step_motion import Motion
+from openbeam_step_lerobot import write_physics
 
 
 def save_scene(root):
@@ -46,6 +47,20 @@ def test_measured_steps_and_camera(tmp_path):
     with (tmp_path/"nodes_lead.npy").open("r+b") as f:
         f.seek(-4,2);f.write(b"\xff\xff\xff\x00")
     with pytest.raises(ValueError,match="differ"):Motion(tmp_path)
+
+
+def test_lerobot_preserves_physics_outside_camera_frames(tmp_path):
+    nodes = save_scene(tmp_path)
+    motion = Motion(tmp_path)
+    output = tmp_path / "dataset"
+    output.mkdir()
+    path = write_physics(motion, output)
+    with np.load(path, allow_pickle=False) as data:
+        np.testing.assert_array_equal(data["frame_ticks"], [f["tick"] for f in motion.frames])
+        np.testing.assert_array_equal(data["cable_position"], nodes[:, :, :3])
+        np.testing.assert_array_equal(data["cable_velocity"], nodes[:, :, 3:])
+        np.testing.assert_array_equal(data["link_orientation"], motion.quat)
+        np.testing.assert_array_equal(data["plugs"], motion.plugs)
 
 
 def test_mujoco_readback_between_camera_frames(tmp_path):
