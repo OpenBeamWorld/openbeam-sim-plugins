@@ -300,6 +300,8 @@ python tools/openbeam_cloud.py cloud_softbody_export '{"actor": 3, "state": "liv
 Private native-motion archives can also be played in MuJoCo and Isaac Sim. Both
 hosts import the robot and cable measurements at the recorded OpenBeam physics rate.
 See the [native motion import commands](docs/CLOUD_MCP.md#private-scene-motion-import).
+The same recording can be exported as a local LeRobot v3 dataset with the
+source camera and a full-rate physics archive. See [LeRobot motion export](docs/CLOUD_MCP.md#lerobot-motion-export).
 
 ## Build
 
