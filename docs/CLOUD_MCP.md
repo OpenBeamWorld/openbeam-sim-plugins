@@ -245,3 +245,8 @@ outside the camera clip, is in `openbeam/physics.npz`. Its coordinate convention
 link order, cable-node names and verification hashes are in `openbeam/motion.json`.
 The native scene carries measured motion and the resulting dataset is an
 observation recording. The exporter writes the dataset locally.
+
+To prepare the cloud viewer with synchronized 2 kHz force plots, run
+`python tools/openbeam_lerobot_view.py --dataset ./rack-episode --repo-id openbeam/g1-rack --out episode.rrd`.
+The camera timeline covers the filmed interval. Selecting `openbeam_step`
+also exposes the recorded physics before and after the camera sequence.
