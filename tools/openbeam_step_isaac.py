@@ -120,10 +120,12 @@ def run(app, args, m):
             for j, op in enumerate(sim.links.values()):
                 position = np.asarray(op.Get(t).ExtractTranslation())
                 max_pos = max(max_pos,np.max(np.abs(position-m.pos[m.index(tick),j])))
+        if not f and (tick-m.first)%256 == 0:
+            app.update()
         if f and viewport:
             if args.usd:
                 timeline.set_current_time(tick*m.scene["step_s"])
-            for _ in range(45 if tick == m.first else 3):
+            for _ in range(45 if tick == m.frames[0]["tick"] else 3):
                 app.update()
             dest = (args.frames/(str(tick)+".png")).resolve()
             capture_viewport_to_file(viewport,str(dest))
@@ -146,7 +148,8 @@ def run(app, args, m):
     if args.usd:
         if args.usd.exists() or not stage.GetRootLayer().Export(str(args.usd.resolve())):
             raise ValueError("could not create the animated USD")
-    args.receipt.write_text(json.dumps(dict(host="Isaac Sim",steps=m.count,first_tick=m.first,last_tick=m.last,
+    from isaacsim.core.version import get_version
+    args.receipt.write_text(json.dumps(dict(host="Isaac Sim",version=get_version()[0],steps=m.count,first_tick=m.first,last_tick=m.last,
         rendered_frames=len(frames) if viewport else 0,frame_ticks_sha256=m.frames_hash(),
         cable_position_sha256=h.hexdigest(),cable_velocity_sha256=vel.hexdigest(),
         max_video_link_translation_error_m=float(max_pos),telemetry_readback_steps=m.count),indent=2))
