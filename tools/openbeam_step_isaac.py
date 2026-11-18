@@ -148,8 +148,11 @@ def run(app, args, m):
     if args.usd:
         if args.usd.exists() or not stage.GetRootLayer().Export(str(args.usd.resolve())):
             raise ValueError("could not create the animated USD")
-    from isaacsim.core.version import get_version
-    args.receipt.write_text(json.dumps(dict(host="Isaac Sim",version=get_version()[0],steps=m.count,first_tick=m.first,last_tick=m.last,
+    import os
+    install = os.environ.get("ISAAC_PATH")
+    version_file = Path(install)/"VERSION" if install else None
+    version = version_file.read_text().strip() if version_file and version_file.is_file() else None
+    args.receipt.write_text(json.dumps(dict(host="Isaac Sim",version=version,steps=m.count,first_tick=m.first,last_tick=m.last,
         rendered_frames=len(frames) if viewport else 0,frame_ticks_sha256=m.frames_hash(),
         cable_position_sha256=h.hexdigest(),cable_velocity_sha256=vel.hexdigest(),
         max_video_link_translation_error_m=float(max_pos),telemetry_readback_steps=m.count),indent=2))
